@@ -1,0 +1,32 @@
+# Caddy serves the built frontend (frontend/dist) and reverse-proxies API
+# routes to the backend container - all under one HTTPS origin, so there's
+# no cross-origin/CORS complexity in production, and only one certificate
+# to manage.
+#
+# No domain name, so no automatic Let's Encrypt here - `tls` below points
+# to a certificate you generate yourself with mkcert (see README: "Mise en
+# production" section) for the server's LAN IP/hostname.
+
+:443 {
+	tls /certs/server.pem /certs/server-key.pem
+
+	# Anything matching these paths goes to the FastAPI backend, unchanged
+	# (no prefix stripping - keeps frontend code identical between local
+	# dev and production).
+	@api path /auth/* /scans/* /admin/* /ocr /health
+	reverse_proxy @api backend:8000
+
+	# Everything else: the built React app (frontend/dist).
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+# Plain HTTP is only used to redirect to HTTPS - camera access requires a
+# secure context anyway, so there's no reason to ever serve the app itself
+# over :80.
+:80 {
+	redir https://{host}{uri} permanent
+}

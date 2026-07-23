@@ -1,0 +1,44 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    # Not exposed to the host on purpose - only the backend container talks
+    # to it, over the internal Docker network. Remove the comment below if
+    # you need to inspect it directly with a GUI tool during setup.
+    # ports:
+    #   - "27017:27017"
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      MONGODB_URI: mongodb://mongo:27017
+      MONGODB_DB_NAME: ticket_scanner
+      # Override this in a .env file at the project root in production -
+      # never ship the default value.
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production-please}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-480}
+      # Same-origin in production (everything goes through Caddy on one
+      # HTTPS address), so this mostly matters for local dev against a
+      # backend container - adjust to your dev frontend origin if needed.
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173,https://localhost:5173}
+    depends_on:
+      - mongo
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/certs:/certs:ro
+      - ./frontend/dist:/srv:ro
+    depends_on:
+      - backend
+
+volumes:
+  mongo_data:
