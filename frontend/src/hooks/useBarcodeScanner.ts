@@ -17,6 +17,7 @@ import { roiInPixels, centerInsideRoi } from "../lib/roi";
 import type { ScanRecord, ScannerStatus, ScanMethod } from "../types";
 
 const TICK_INTERVAL_MS = 150;
+
 const DETECTION_MAX_WIDTH = 720;
 const MISS_TICKS_BEFORE_HINT = 5;
 const MISS_TICKS_BEFORE_OCR = 18;
@@ -25,6 +26,7 @@ const SHARPNESS_BLUR_THRESHOLD = 8;
 // Poll the active inventory every 30s so the scanner picks up changes
 // made by the admin without requiring a page reload.
 const INVENTORY_POLL_INTERVAL_MS = 30_000;
+const SUCCESS_FLASH_MS = 2000; // était 900
 
 interface UseBarcodeScannerOptions {
   videoRef: RefObject<HTMLVideoElement>;
@@ -51,20 +53,36 @@ export function useBarcodeScanner({
   const ocrInFlightRef = useRef(false);
   const successFlashTimeoutRef = useRef<number | null>(null);
   const activeInventoryRef = useRef<ActiveInventoryDto | null>(null);
+  // 1. Augmenter la durée du flash
+
+// 2. Ajouter un ref pour geler le scan pendant le flash
+const scanFrozenRef = useRef(false);
 
   // Keep ref in sync with state so tick() can read without stale closure
   useEffect(() => {
     activeInventoryRef.current = activeInventory;
   }, [activeInventory]);
 
+  // const flashSuccess = useCallback((code: string, method: ScanMethod) => {
+  //   beepSuccess();
+  //   setStatus({ kind: "success", code, method });
+  //   if (successFlashTimeoutRef.current)
+  //     window.clearTimeout(successFlashTimeoutRef.current);
+  //   successFlashTimeoutRef.current = window.setTimeout(() => {
+  //     setStatus({ kind: "scanning" });
+  //   }, 900);
+  // }, []);
+
   const flashSuccess = useCallback((code: string, method: ScanMethod) => {
     beepSuccess();
     setStatus({ kind: "success", code, method });
+    scanFrozenRef.current = true; // ← geler le scan
     if (successFlashTimeoutRef.current)
       window.clearTimeout(successFlashTimeoutRef.current);
     successFlashTimeoutRef.current = window.setTimeout(() => {
+      scanFrozenRef.current = false; // ← reprendre le scan
       setStatus({ kind: "scanning" });
-    }, 900);
+    }, SUCCESS_FLASH_MS);
   }, []);
 
   const registerNewCode = useCallback(
@@ -151,7 +169,7 @@ export function useBarcodeScanner({
       const inv = await fetchActiveInventory(token);
 
       setActiveInventory(inv);
-
+      activeInventoryRef.current = inv;
       const date = inv?.inventory_date ?? todayDateString();
 
       const { scans: existing } = await myScans(token, date);
@@ -234,6 +252,7 @@ export function useBarcodeScanner({
   );
 
   const tick = useCallback(async () => {
+      if (scanFrozenRef.current) return; // ← pause pendant le flash
     const video = videoRef.current;
     if (!video || video.readyState < 2 || isProcessingRef.current) return;
     isProcessingRef.current = true;
@@ -311,6 +330,7 @@ export function useBarcodeScanner({
       try {
         const inv = await fetchActiveInventory(token);
         setActiveInventory(inv);
+        activeInventoryRef.current = inv;
         const date = inv?.inventory_date ?? todayDateString();
         const { scans: existing } = await myScans(token, date);
         setScans(
@@ -336,8 +356,12 @@ export function useBarcodeScanner({
           inv?.inventory_date !== activeInventoryRef.current?.inventory_date
         ) {
           setActiveInventory(inv);
+          activeInventoryRef.current = inv;
           // Reset seen codes for the new inventory
-          seenRef.current.reset();
+          seenRef.current.reset(); // ← vider les anciens codes
+          setScans([]); // ← vider la liste visible
+          setDeletedIds(new Set());
+
           const date = inv?.inventory_date ?? todayDateString();
           const { scans: existing } = await myScans(token!, date);
           setScans(

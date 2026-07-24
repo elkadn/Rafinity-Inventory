@@ -6,24 +6,31 @@ import type { ScanRecord, ActiveInventory } from "../types";
 interface Props {
   scans: ScanRecord[];
   onClose: () => void;
-  onManualAdd: (code: string) => Promise<"added" | "duplicate" | "error" | "empty">;
+  onManualAdd: (
+    code: string,
+  ) => Promise<"added" | "duplicate" | "error" | "empty">;
   onDelete: (scanId: string, code: string) => Promise<"deleted" | "error">;
   activeInventory: ActiveInventory | null;
 }
 
+function formatDate(date: string | number | Date): string {
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(date));
+}
+
 function toCsv(scans: ScanRecord[]): string {
-  const header = "code,methode,confiance,horodatage\n";
+  const header = "code,methode,horodatage\n";
   const rows = scans
     .slice()
     .reverse()
-    .map((s) =>
-      [
-        s.code,
-        s.method,
-        s.confidence !== null ? s.confidence.toFixed(2) : "",
-        new Date(s.scannedAt).toISOString(),
-      ].join(",")
-    );
+    .map((s) => [s.code, s.method, formatDate(s.scannedAt)].join(","));
+
   return header + rows.join("\n");
 }
 
@@ -43,7 +50,13 @@ function methodLabel(method: string): string {
   return "Ajout manuel";
 }
 
-export function ScanList({ scans, onClose, onManualAdd, onDelete, activeInventory }: Props) {
+export function ScanList({
+  scans,
+  onClose,
+  onManualAdd,
+  onDelete,
+  activeInventory,
+}: Props) {
   const [manualCode, setManualCode] = useState("");
   const [manualFeedback, setManualFeedback] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
@@ -71,7 +84,8 @@ export function ScanList({ scans, onClose, onManualAdd, onDelete, activeInventor
   };
 
   const handleDelete = async (scan: ScanRecord) => {
-    if (!window.confirm(`Supprimer le code ${scan.code} de votre liste ?`)) return;
+    if (!window.confirm(`Supprimer le code ${scan.code} de votre liste ?`))
+      return;
     setDeletingId(scan.id);
     try {
       await onDelete(scan.id, scan.code);
@@ -106,10 +120,18 @@ export function ScanList({ scans, onClose, onManualAdd, onDelete, activeInventor
         <div>
           <div style={{ fontSize: 18, fontWeight: 700 }}>Tickets scannés</div>
           <div style={{ fontSize: 13, color: "var(--color-text-muted)" }}>
-            {scans.length} code{scans.length > 1 ? "s" : ""} unique{scans.length > 1 ? "s" : ""}
+            {scans.length} code{scans.length > 1 ? "s" : ""} unique
+            {scans.length > 1 ? "s" : ""}
             {activeInventory && (
-              <span style={{ marginLeft: 6, color: "var(--color-primary-dark)", fontWeight: 600 }}>
-                · Inventaire : {activeInventory.label ?? activeInventory.inventory_date}
+              <span
+                style={{
+                  marginLeft: 6,
+                  color: "var(--color-primary-dark)",
+                  fontWeight: 600,
+                }}
+              >
+                · Inventaire :{" "}
+                {activeInventory.label ?? activeInventory.inventory_date}
               </span>
             )}
           </div>
@@ -130,7 +152,9 @@ export function ScanList({ scans, onClose, onManualAdd, onDelete, activeInventor
         }}
       >
         <button
-          onClick={() => download(`scans-${Date.now()}.csv`, toCsv(scans), "text/csv")}
+          onClick={() =>
+            download(`scans-${Date.now()}.csv`, toCsv(scans), "text/csv")
+          }
           disabled={scans.length === 0}
           style={exportBtnStyle}
         >
@@ -183,7 +207,9 @@ export function ScanList({ scans, onClose, onManualAdd, onDelete, activeInventor
           </button>
         </div>
         {manualFeedback && (
-          <div style={{ fontSize: 12.5, color: "var(--color-text-muted)" }}>{manualFeedback}</div>
+          <div style={{ fontSize: 12.5, color: "var(--color-text-muted)" }}>
+            {manualFeedback}
+          </div>
         )}
       </div>
 
@@ -204,7 +230,9 @@ export function ScanList({ scans, onClose, onManualAdd, onDelete, activeInventor
             }}
           >
             <TicketIcon size={40} />
-            <div style={{ fontSize: 15 }}>Aucun ticket scanné pour l'instant.</div>
+            <div style={{ fontSize: 15 }}>
+              Aucun ticket scanné pour l'instant.
+            </div>
           </div>
         )}
         {scans.map((s) => (
@@ -249,7 +277,8 @@ export function ScanList({ scans, onClose, onManualAdd, onDelete, activeInventor
                 {s.code}
               </div>
               <div style={{ color: "var(--color-text-muted)", fontSize: 12.5 }}>
-                {methodLabel(s.method)} · {new Date(s.scannedAt).toLocaleTimeString()}
+                {methodLabel(s.method)} ·{" "}
+                {new Date(s.scannedAt).toLocaleTimeString()}
               </div>
             </div>
             {/* Delete button */}
