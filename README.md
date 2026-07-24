@@ -66,10 +66,10 @@ CLI, depuis `backend/` avec le venv actif :
 python -m scripts.create_user --username admin --password "changeme123" \
     --nom Admin --prenom Principal --role admin
 
-python -m scripts.create_user --username nora --password "changeme123" \
+python -m scripts.create_user --username nora --password "elkadn" \
     --nom Alaoui --prenom Nora --role scanner
 
-python -m scripts.create_user --username kaoutar --password "changeme123" \
+python -m scripts.create_user --username kaoutar --password "elkadn" \
     --nom Benali --prenom Kaoutar --role scanner --ip-poste 192.168.1.42
 ```
 

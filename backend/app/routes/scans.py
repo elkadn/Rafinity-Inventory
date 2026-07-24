@@ -152,6 +152,7 @@ async def delete_scan(
     del_doc = deletion.model_dump()
     del_doc["_id"] = del_doc.pop("id")
     await db.deletions.insert_one(del_doc)
+    await db.scans.delete_one({"_id": scan_id})
 
     return DeletionResponse(deleted=True, deletion=deletion)
 
