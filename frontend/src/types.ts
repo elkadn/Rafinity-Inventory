@@ -33,6 +33,7 @@ export type ScannerStatus =
   | { kind: "idle" }
   | { kind: "scanning" } // actively looking, nothing notable right now
   | { kind: "too_far_or_blurry" } // no code found, frame unstable/blurry
+  | { kind: "ocr" } // barcode miss detected, OCR fallback in progress
   | { kind: "success"; code: string; method: ScanMethod } // just registered
   | { kind: "already_scanned"; code: string } // same physical ticket, still in view
   | { kind: "camera_error"; message: string };

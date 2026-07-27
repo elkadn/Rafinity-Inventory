@@ -185,3 +185,24 @@ export function HomeIcon(props: IconProps) {
     </svg>
   );
 }
+
+export function AiIcon({ size = 20 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path
+        d="M12 2l1.6 5.4L19 9l-5.4 1.6L12 16l-1.6-5.4L5 9l5.4-1.6L12 2z"
+        fill="currentColor"
+      />
+      <path
+        d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}

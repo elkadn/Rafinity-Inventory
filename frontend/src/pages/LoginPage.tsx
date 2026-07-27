@@ -27,7 +27,7 @@ export default function LoginPage() {
         navigate("/scan");
       }
     } catch (err) {
-      setError("Nom d'utilisateur ou mot de passe incorrect.");
+      setError("Nom d'utilisateur ou mot de passe incorrect !");
       console.error(err);
     } finally {
       setIsSubmitting(false);

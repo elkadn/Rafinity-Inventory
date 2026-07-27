@@ -348,7 +348,13 @@ function DaysView({
   loading: boolean;
   onSelectDay: (date: string) => void;
 }) {
+  const [selectedDate, setSelectedDate] = useState("");
+
   if (loading) return <PageSkeleton />;
+
+  const filteredDays = days.filter(
+    (day) => !selectedDate || day.date === selectedDate
+  );
 
   return (
     <div>
@@ -356,11 +362,49 @@ function DaysView({
         title="Scans par journée"
         subtitle="Consultez les codes scannés, jour par jour"
       />
+      <div
+        style={{
+          marginBottom: 14,
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          flexWrap: "wrap",
+        }}
+      >
+        <input
+          type="date"
+          value={selectedDate}
+          onChange={(e) => setSelectedDate(e.target.value)}
+          className="admin-input"
+          style={{
+            ...inputStyle,
+            width: "100%",
+            maxWidth: 280,
+            padding: "9px 12px",
+          }}
+        />
+        {selectedDate && (
+          <button
+            onClick={() => setSelectedDate("")}
+            style={{
+              ...ghostBtnStyle,
+              padding: "9px 12px",
+              fontSize: 13,
+              fontWeight: 600,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Réinitialiser
+          </button>
+        )}
+      </div>
       {days.length === 0 ? (
         <EmptyState text="Aucun scan enregistré pour l'instant." />
+      ) : filteredDays.length === 0 ? (
+        <EmptyState text="Aucune journée ne correspond à cette date." />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {days.map((d) => (
+          {filteredDays.map((d) => (
             <button
               key={d.date}
               className="admin-row-btn"
@@ -525,7 +569,7 @@ function UserScansView({
         <PrimaryButton
           onClick={() => token && adminDownloadDayCsv(token, date, userId)}
         >
-          <DownloadIcon size={15} /> Export CSV
+          <DownloadIcon size={15} /> Export Excel
         </PrimaryButton>
       </div>
 
@@ -693,7 +737,7 @@ function MergedView({ date, onBack }: { date: string; onBack: () => void }) {
         <PrimaryButton
           onClick={() => token && adminDownloadDayCsv(token, date)}
         >
-          <DownloadIcon size={15} /> Export CSV fusionné
+          <DownloadIcon size={15} /> Export Excel fusionné
         </PrimaryButton>
       </div>
 
@@ -954,7 +998,6 @@ function InventoryView({
           <FieldGroup label="Libellé (optionnel)">
             <input
               className="admin-input"
-              placeholder="ex : Inventaire juin 2026"
               value={label}
               onChange={(e) => setLabel(e.target.value)}
               style={inputStyle}
@@ -1098,6 +1141,8 @@ function DeletionsView() {
   const [deletions, setDeletions] = useState<DeletionDto[]>([]);
   const [filterDate, setFilterDate] = useState("");
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
 
   const load = async (date?: string) => {
     if (!token) return;
@@ -1115,15 +1160,25 @@ function DeletionsView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  // Correction ici : on appelle load() avec undefined pour tout charger
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(deletions.length / rowsPerPage));
+    setPage((currentPage) => Math.min(currentPage, totalPages));
+  }, [deletions.length, rowsPerPage]);
+
   const handleClearFilter = () => {
     setFilterDate("");
-    load(undefined); // Recharger sans filtre
+    setPage(1);
+    load(undefined);
   };
 
   const handleFilter = () => {
+    setPage(1);
     load(filterDate || undefined);
   };
+
+  const totalPages = Math.max(1, Math.ceil(deletions.length / rowsPerPage));
+  const startIndex = (page - 1) * rowsPerPage;
+  const visibleDeletions = deletions.slice(startIndex, startIndex + rowsPerPage);
 
   return (
     <div>
@@ -1163,54 +1218,130 @@ function DeletionsView() {
           text={`Aucune suppression enregistrée${filterDate ? ` pour le ${filterDate}` : ""}.`}
         />
       ) : (
-        <div style={tableWrapStyle}>
+        <>
           <div
             style={{
-              ...tableHeadStyle,
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr 1fr 1.6fr",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 12,
+              marginBottom: 12,
+              flexWrap: "wrap",
             }}
           >
-            <div>Code</div>
-            <div>Utilisateur</div>
-            <div>Inventaire</div>
-            <div>Supprimé le</div>
-          </div>
-          {deletions.map((d, i) => (
-            <div
-              key={d.id}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr 1fr 1.6fr",
-                padding: "12px 18px",
-                fontSize: 13.5,
-                borderBottom:
-                  i < deletions.length - 1 ? "1px solid #eeece0" : "none",
-                alignItems: "start",
-              }}
-            >
-              <div
+            <div style={{ fontSize: 13, color: "#7f785d" }}>
+              Affichage de {startIndex + 1} à {Math.min(startIndex + rowsPerPage, deletions.length)} sur {deletions.length}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <label style={{ fontSize: 13, color: "#7f785d" }}>
+                Lignes par page
+              </label>
+              <select
+                value={rowsPerPage}
+                onChange={(e) => setRowsPerPage(Number(e.target.value))}
+                className="admin-select"
                 style={{
-                  fontFamily: "ui-monospace, monospace",
-                  fontWeight: 700,
-                  color: "#c0564f",
+                  ...inputStyle,
+                  padding: "8px 10px",
+                  minWidth: 90,
                 }}
               >
-                {d.code}
-              </div>
-              <div style={{ color: "#2b2a22" }}>{d.username}</div>
-              <div style={{ color: "#8b8574" }}>{d.inventory_date}</div>
-              <div style={{ color: "#9a927a", fontSize: 12 }}>
-                {new Date(d.deleted_at * 1000).toLocaleString()}
-                {d.reason && (
-                  <div style={{ marginTop: 2, fontStyle: "italic" }}>
-                    « {d.reason} »
-                  </div>
-                )}
-              </div>
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
             </div>
-          ))}
-        </div>
+          </div>
+
+          <div style={tableWrapStyle}>
+            <div
+              style={{
+                ...tableHeadStyle,
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr 1fr 1.6fr",
+              }}
+            >
+              <div>Code</div>
+              <div>Utilisateur</div>
+              <div>Inventaire</div>
+              <div>Supprimé le</div>
+            </div>
+            {visibleDeletions.map((d, i) => (
+              <div
+                key={d.id}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr 1fr 1.6fr",
+                  padding: "12px 18px",
+                  fontSize: 13.5,
+                  borderBottom:
+                    i < visibleDeletions.length - 1 ? "1px solid #eeece0" : "none",
+                  alignItems: "start",
+                }}
+              >
+                <div
+                  style={{
+                    fontFamily: "ui-monospace, monospace",
+                    fontWeight: 700,
+                    color: "#c0564f",
+                  }}
+                >
+                  {d.code}
+                </div>
+                <div style={{ color: "#2b2a22" }}>{d.username}</div>
+                <div style={{ color: "#8b8574" }}>{d.inventory_date}</div>
+                <div style={{ color: "#9a927a", fontSize: 12 }}>
+                  {new Date(d.deleted_at * 1000).toLocaleString()}
+                  {d.reason && (
+                    <div style={{ marginTop: 2, fontStyle: "italic" }}>
+                      « {d.reason} »
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginTop: 14,
+              gap: 10,
+              flexWrap: "wrap",
+            }}
+          >
+            <button
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              disabled={page === 1}
+              style={{
+                ...ghostBtnStyle,
+                padding: "8px 12px",
+                opacity: page === 1 ? 0.5 : 1,
+                cursor: page === 1 ? "not-allowed" : "pointer",
+              }}
+            >
+              Précédent
+            </button>
+            <div style={{ fontSize: 13, color: "#7f785d" }}>
+              Page {page} / {totalPages}
+            </div>
+            <button
+              onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+              disabled={page === totalPages}
+              style={{
+                ...ghostBtnStyle,
+                padding: "8px 12px",
+                opacity: page === totalPages ? 0.5 : 1,
+                cursor: page === totalPages ? "not-allowed" : "pointer",
+              }}
+            >
+              Suivant
+            </button>
+          </div>
+        </>
       )}
     </div>
   );

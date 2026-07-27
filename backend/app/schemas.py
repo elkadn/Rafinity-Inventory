@@ -61,6 +61,12 @@ class LoginRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    expires_at: float
+    user: UserPublic
+
+
+class MeResponse(BaseModel):
+    expires_at: float
     user: UserPublic
 
 

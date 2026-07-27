@@ -37,7 +37,9 @@ source venv/bin/activate
 pip install -r requirements.txt
 pip uninstall bcrypt
 pip install bcrypt==4.0.1
+pip install openpyxl
 ```
+
 
 Dépendance système pour l'OCR (tesseract) :
 ```bash

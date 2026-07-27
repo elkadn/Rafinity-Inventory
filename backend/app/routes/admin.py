@@ -5,6 +5,9 @@ import io
 import time
 from typing import Optional
 
+from openpyxl import Workbook
+from openpyxl.styles import Font
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from pymongo.errors import DuplicateKeyError
@@ -160,20 +163,38 @@ async def merged_day(inventory_date: str) -> MergedDayResponse:
     return MergedDayResponse(date=inventory_date, codes=codes, total_unique_codes=len(codes), conflicts=conflicts)
 
 
-@router.get("/days/{inventory_date}/export.csv")
-async def export_day_csv(inventory_date: str, user_id: Optional[str] = None):
+def _xlsx_response(headers: list[str], rows: list[list[object]], filename: str) -> StreamingResponse:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Export"
+    sheet.append(headers)
+    for row in rows:
+        sheet.append(row)
+
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    return StreamingResponse(
+        iter([buffer.getvalue()]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/days/{inventory_date}/export.xlsx")
+async def export_day_excel(inventory_date: str, user_id: Optional[str] = None):
     db = get_db()
-    buffer = io.StringIO()
-    writer = csv.writer(buffer)
 
     if user_id:
         del_docs = await db.deletions.find({"user_id": user_id, "inventory_date": inventory_date}).to_list(length=10000)
         deleted_ids = {d["scan_id"] for d in del_docs}
         docs = await db.scans.find({"inventory_date": inventory_date, "user_id": user_id, "_id": {"$nin": list(deleted_ids)}}).sort("scanned_at", 1).to_list(length=10000)
-        writer.writerow(["code", "methode", "date_reelle_scan", "date_inventaire"])
-        for d in docs:
-            writer.writerow([d["code"], d["method"] or "", d["scan_date"], d.get("inventory_date", "")])
-        filename = f"scans-{inventory_date}-{user_id}.csv"
+        headers = ["code", "methode", "date_reelle_scan", "date_inventaire"]
+        rows = [[d["code"], d["method"] or "", d["scan_date"], d.get("inventory_date", "")] for d in docs]
+        filename = f"scans-{inventory_date}-{user_id}.xlsx"
     else:
         del_docs = await db.deletions.find({"inventory_date": inventory_date}).to_list(length=100000)
         deleted_ids = {d["scan_id"] for d in del_docs}
@@ -183,13 +204,11 @@ async def export_day_csv(inventory_date: str, user_id: Optional[str] = None):
             {"$sort": {"_id": 1}},
         ]
         results = await db.scans.aggregate(pipeline).to_list(length=100000)
-        writer.writerow(["code", "utilisateurs", "methodes"])
-        for r in results:
-            writer.writerow([r["_id"], ";".join(r["users"]), ";".join(r["methods"])])
-        filename = f"scans-{inventory_date}-fusion.csv"
+        headers = ["code", "utilisateurs", "methodes"]
+        rows = [[r["_id"], ";".join(r["users"]), ";".join(r["methods"])] for r in results]
+        filename = f"scans-{inventory_date}-fusion.xlsx"
 
-    buffer.seek(0)
-    return StreamingResponse(iter([buffer.getvalue()]), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+    return _xlsx_response(headers, rows, filename)
 
 
 # ------------------------------------------------------------------ #

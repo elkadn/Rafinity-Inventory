@@ -35,6 +35,7 @@ export interface AuthUserDto {
 export interface LoginResult {
   access_token: string;
   token_type: string;
+  expires_at: number;
   user: AuthUserDto;
 }
 
@@ -47,9 +48,14 @@ export async function login(username: string, password: string): Promise<LoginRe
   return handle<LoginResult>(res);
 }
 
-export async function fetchMe(token: string): Promise<AuthUserDto> {
+export interface MeResult {
+  expires_at: number;
+  user: AuthUserDto;
+}
+
+export async function fetchMe(token: string): Promise<MeResult> {
   const res = await fetch(`${API_BASE}/auth/me`, { headers: authHeaders(token) });
-  return handle<AuthUserDto>(res);
+  return handle<MeResult>(res);
 }
 
 // --------------------------------------------------------------------- //
@@ -175,7 +181,7 @@ export async function adminDownloadDayCsv(
   date: string,
   userId?: string
 ): Promise<void> {
-  const url = new URL(`${API_BASE}/admin/days/${date}/export.csv`, window.location.href);
+  const url = new URL(`${API_BASE}/admin/days/${date}/export.xlsx`, window.location.href);
   if (userId) url.searchParams.set("user_id", userId);
   const res = await fetch(url.toString(), { headers: authHeaders(token) });
   if (!res.ok) throw new Error(`Export failed: ${res.status}`);
@@ -183,7 +189,7 @@ export async function adminDownloadDayCsv(
   const objectUrl = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = objectUrl;
-  a.download = userId ? `scans-${date}-${userId}.csv` : `scans-${date}-fusion.csv`;
+  a.download = userId ? `scans-${date}-${userId}.xlsx` : `scans-${date}-fusion.xlsx`;
   a.click();
   URL.revokeObjectURL(objectUrl);
 }

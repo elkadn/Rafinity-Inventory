@@ -11,7 +11,7 @@ class Settings:
     # different port than the backend.
     ALLOWED_ORIGINS = os.environ.get(
         "ALLOWED_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173,https://localhost:5173,https://192.168.1.34:5173",
+        "https://localhost:5173,https://192.168.1.89:5173",
     ).split(",")
 
     # ---- MongoDB ----
@@ -21,9 +21,9 @@ class Settings:
     # ---- Auth / JWT ----
     # IMPORTANT: override JWT_SECRET via environment variable in production -
     # this default is only here so the app doesn't crash on first run.
-    JWT_SECRET = os.environ.get("JWT_SECRET", "change-me-in-production-please")
+    JWT_SECRET = os.environ.get("JWT_SECRET", "jesuiadnaneelkiheletjesuislpourrafinityprojet")
     JWT_ALGORITHM = "HS256"
-    JWT_EXPIRE_MINUTES = int(os.environ.get("JWT_EXPIRE_MINUTES", "480"))  # 8h work day
+    JWT_EXPIRE_MINUTES = int(os.environ.get("JWT_EXPIRE_MINUTES", "480"))
 
     # ---- OCR fallback tuning ----
     OCR_ROTATION_RANGE_DEG = 18

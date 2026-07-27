@@ -20,6 +20,15 @@ function RequireAdmin({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+function RequireGuest({ children }: { children: ReactNode }) {
+  const { token, user, isLoading } = useAuth();
+  if (isLoading) return <FullScreenLoading />;
+  if (token && user) {
+    return <Navigate to={user.role === "admin" ? "/admin" : "/scan"} replace />;
+  }
+  return <>{children}</>;
+}
+
 function FullScreenLoading() {
   return (
     <div
@@ -43,7 +52,14 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <Routes>
-          <Route path="/login" element={<LoginPage />} />
+          <Route
+            path="/login"
+            element={
+              <RequireGuest>
+                <LoginPage />
+              </RequireGuest>
+            }
+          />
           <Route
             path="/scan"
             element={

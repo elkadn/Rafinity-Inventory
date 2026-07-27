@@ -32,6 +32,13 @@ const STYLES: Record<ScannerStatus["kind"], StatusStyle> = {
     icon: AlertIcon,
     label: () => "Rapprochez-vous du ticket",
   },
+  ocr: {
+    frameColor: "#2563eb",
+    pillBg: "#eff6ff",
+    pillText: "#1e40af",
+    icon: SearchIcon,
+    label: () => "Analyse OCR en cours…",
+  },
   success: {
     frameColor: "#16a34a",
     pillBg: "#f0fdf4",

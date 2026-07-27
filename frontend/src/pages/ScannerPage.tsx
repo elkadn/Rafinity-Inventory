@@ -5,7 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import { StatusOverlay } from "../components/StatusOverlay";
 import { ScanList } from "../components/ScanList";
 import { CameraPermissionScreen } from "../components/CameraPermissionScreen";
-import { CameraIcon, ListIcon, StopIcon } from "../components/icons";
+import { AiIcon, CameraIcon, ListIcon, StopIcon } from "../components/icons";
 import { initAudio } from "../lib/beep";
 
 export default function ScannerPage() {
@@ -14,8 +14,20 @@ export default function ScannerPage() {
     useCamera();
   const [showList, setShowList] = useState(false);
 
-  const { status, scans, addManualCode, deleteScanById, activeInventory } =
-    useBarcodeScanner({ videoRef, isRunning, token });
+  const {
+    status,
+    scans,
+    addManualCode,
+    deleteScanById,
+    activeInventory,
+    triggerOcr,
+    ocrInProgress,
+    captureFrameForOcr,
+    runOcrOnImage,
+  } = useBarcodeScanner({ videoRef, isRunning, token });
+  const [ocrPreviewUrl, setOcrPreviewUrl] = useState<string | null>(null);
+  const [ocrPreviewBlob, setOcrPreviewBlob] = useState<Blob | null>(null);
+  const [ocrError, setOcrError] = useState<string | null>(null);
 
   const handleStart = async () => {
     // Must run synchronously inside the click handler, before any `await` -
@@ -29,11 +41,49 @@ export default function ScannerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (ocrPreviewUrl) URL.revokeObjectURL(ocrPreviewUrl);
+    };
+  }, [ocrPreviewUrl]);
+
   const showPermissionScreen = !isRunning && permissionState === "denied";
   const capitalize = (text?: string) => {
     if (!text) return "";
     return text.toUpperCase();
-  }; 
+  };
+
+  const handleCaptureOcr = async () => {
+    setOcrError(null);
+    const { blob, previewUrl } = await captureFrameForOcr();
+    if (!blob || !previewUrl) {
+      setOcrError("Impossible de capturer l'image du ticket.");
+      return;
+    }
+    if (ocrPreviewUrl) URL.revokeObjectURL(ocrPreviewUrl);
+    setOcrPreviewBlob(blob);
+    setOcrPreviewUrl(previewUrl);
+  };
+
+  const handleValidateOcr = async () => {
+    if (!ocrPreviewBlob) return;
+    setOcrError(null);
+    const result = await runOcrOnImage(ocrPreviewBlob);
+    if (!result.ok) {
+      setOcrError(result.error ?? "Échec de l'analyse OCR.");
+      return;
+    }
+    if (ocrPreviewUrl) URL.revokeObjectURL(ocrPreviewUrl);
+    setOcrPreviewBlob(null);
+    setOcrPreviewUrl(null);
+  };
+
+  const handleDismissOcrPreview = () => {
+    if (ocrPreviewUrl) URL.revokeObjectURL(ocrPreviewUrl);
+    setOcrPreviewBlob(null);
+    setOcrPreviewUrl(null);
+    setOcrError(null);
+  };
 
   return (
     <div
@@ -106,7 +156,8 @@ export default function ScannerPage() {
 
             {activeInventory && (
               <div style={inventoryBadgeStyle}>
-                📋 Inventaire actif : {activeInventory.label} {activeInventory.inventory_date}
+                📋 Inventaire actif : {activeInventory.label}{" "}
+                {activeInventory.inventory_date}
               </div>
             )}
 
@@ -167,7 +218,7 @@ export default function ScannerPage() {
         </div>
       )}
 
-      {isRunning && (
+      {/* {isRunning && (
         <div
           style={{
             position: "absolute",
@@ -195,6 +246,163 @@ export default function ScannerPage() {
             <ListIcon size={20} />
             Voir la liste
           </button>
+          {status.kind === "too_far_or_blurry" && (
+            <button
+              onClick={() => void triggerOcr()}
+              disabled={ocrInProgress}
+              style={{
+                ...bottomBtnStyle,
+                background: "#2563eb",
+                color: "white",
+                border: "1px solid rgba(37, 99, 235, 0.4)",
+                opacity: ocrInProgress ? 0.7 : 1,
+              }}
+            >
+              OCR manuel
+            </button>
+          )}
+        </div>
+      )} */}
+      {isRunning && (
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            bottom: 0,
+            paddingBottom: "calc(var(--safe-bottom) + 14px)",
+            paddingTop: 14,
+            paddingLeft: 16,
+            paddingRight: 16,
+            background:
+              "linear-gradient(to top, rgba(0,0,0,0.58), rgba(0,0,0,0))",
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+          }}
+        >
+          <div style={{ display: "flex", gap: 12 }}>
+            <button
+              onClick={stop}
+              style={{ ...bottomBtnStyle, ...stopBtnStyle }}
+            >
+              <StopIcon size={20} />
+              Arrêter
+            </button>
+            <button
+              onClick={() => void handleCaptureOcr()}
+              disabled={ocrInProgress}
+              style={{
+                ...bottomBtnStyle,
+                background: "#bf1919",
+                color: "white",
+                border: "1px solid rgba(37, 99, 235, 0.4)",
+                opacity: ocrInProgress ? 0.7 : 1,
+              }}
+            >
+              <AiIcon size={20} />
+              {ocrInProgress ? "Analyse..." : "OCR"}
+            </button>
+          </div>
+
+          <button
+            onClick={() => setShowList(true)}
+            style={{ ...bottomBtnStyle, ...listBtnStyle, width: "100%" }}
+          >
+            <ListIcon size={20} />
+            Voir la liste
+          </button>
+        </div>
+      )}
+
+      {ocrPreviewUrl && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: "rgba(7, 12, 23, 0.72)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 20,
+            zIndex: 30,
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 420,
+              background: "#fff",
+              borderRadius: 20,
+              padding: 18,
+              boxShadow: "0 18px 50px rgba(0,0,0,0.22)",
+            }}
+          >
+            <p style={{ margin: "0 0 6px", fontWeight: 800, color: "#1f2937" }}>
+              Prévisualisation du ticket
+            </p>
+            <p style={{ margin: "0 0 12px", color: "#6b7280", fontSize: 14, lineHeight: 1.5 }}>
+              Vérifiez l’image, puis validez pour lancer l’analyse OCR.
+            </p>
+            <img
+              src={ocrPreviewUrl}
+              alt="Prévisualisation OCR"
+              style={{
+                width: "100%",
+                height: "auto",
+                maxHeight: 320,
+                objectFit: "contain",
+                borderRadius: 14,
+                background: "#f3f4f6",
+              }}
+            />
+            {ocrError && (
+              <p
+                style={{
+                  margin: "12px 0 0",
+                  color: "#b91c1c",
+                  fontSize: 13.5,
+                  background: "#fef2f2",
+                  padding: "8px 10px",
+                  borderRadius: 10,
+                }}
+              >
+                {ocrError}
+              </p>
+            )}
+            <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+              <button
+                onClick={handleDismissOcrPreview}
+                style={{
+                  flex: 1,
+                  padding: "11px 12px",
+                  borderRadius: 12,
+                  border: "1px solid #d1d5db",
+                  background: "#fff",
+                  color: "#374151",
+                  fontWeight: 700,
+                }}
+              >
+                Reprendre
+              </button>
+              <button
+                onClick={() => void handleValidateOcr()}
+                disabled={ocrInProgress}
+                style={{
+                  flex: 1,
+                  padding: "11px 12px",
+                  borderRadius: 12,
+                  border: "none",
+                  background: "#1d4ed8",
+                  color: "#fff",
+                  fontWeight: 700,
+                  opacity: ocrInProgress ? 0.7 : 1,
+                }}
+              >
+                {ocrInProgress ? "Analyse..." : "Valider"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

@@ -28,9 +28,15 @@ app.include_router(scans.router)
 app.include_router(admin.router)
 
 
+# @app.on_event("startup")
+# async def on_startup() -> None:
+#     await connect_and_init()
 @app.on_event("startup")
 async def on_startup() -> None:
     await connect_and_init()
+    import asyncio
+    from app.ocr import _get_reader
+    asyncio.get_event_loop().run_in_executor(None, _get_reader)
 
 
 @app.on_event("shutdown")

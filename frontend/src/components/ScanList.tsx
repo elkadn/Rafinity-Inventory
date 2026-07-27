@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { CSSProperties } from "react";
+import * as XLSX from "xlsx";
 import { BarcodeIcon, CloseIcon, DownloadIcon, TicketIcon } from "./icons";
 import type { ScanRecord, ActiveInventory } from "../types";
 
@@ -24,22 +25,30 @@ function formatDate(date: string | number | Date): string {
   }).format(new Date(date));
 }
 
-function toCsv(scans: ScanRecord[]): string {
-  const header = "code,methode,horodatage\n";
+function exportToExcel(scans: ScanRecord[]) {
   const rows = scans
     .slice()
     .reverse()
-    .map((s) => [s.code, s.method, formatDate(s.scannedAt)].join(","));
+    .map((scan) => [scan.code, scan.method, formatDate(scan.scannedAt)]);
 
-  return header + rows.join("\n");
-}
+  const worksheet = XLSX.utils.aoa_to_sheet([
+    ["code", "methode", "horodatage"],
+    ...rows,
+  ]);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Scans");
 
-function download(filename: string, content: string, mime: string) {
-  const blob = new Blob([content], { type: mime });
+  const excelBuffer = XLSX.write(workbook, {
+    bookType: "xlsx",
+    type: "array",
+  });
+  const blob = new Blob([excelBuffer], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = filename;
+  a.download = `scans-${Date.now()}.xlsx`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -61,6 +70,23 @@ export function ScanList({
   const [manualFeedback, setManualFeedback] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const filteredScans = scans.filter((scan) => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return true;
+
+    const haystack = [
+      scan.code,
+      methodLabel(scan.method),
+      formatDate(scan.scannedAt),
+      new Date(scan.scannedAt).toLocaleTimeString(),
+    ]
+      .join(" ")
+      .toLowerCase();
+
+    return haystack.includes(query);
+  });
 
   const handleManualAdd = async () => {
     if (!manualCode.trim()) return;
@@ -71,6 +97,7 @@ export function ScanList({
       if (result === "added") {
         setManualFeedback("✓ Code ajouté.");
         setManualCode("");
+        window.setTimeout(() => setManualFeedback(null), 2000);
       } else if (result === "duplicate") {
         setManualFeedback("Ce code est déjà dans la liste.");
       } else if (result === "empty") {
@@ -152,15 +179,61 @@ export function ScanList({
         }}
       >
         <button
-          onClick={() =>
-            download(`scans-${Date.now()}.csv`, toCsv(scans), "text/csv")
-          }
+          onClick={() => exportToExcel(scans)}
           disabled={scans.length === 0}
           style={exportBtnStyle}
         >
           <DownloadIcon size={18} />
-          Exporter CSV
+          Exporter Excel
         </button>
+      </div>
+
+      {/* Search */}
+      <div
+        style={{
+          padding: "12px 16px",
+          background: "var(--color-surface)",
+          borderBottom: "1px solid var(--color-border)",
+        }}
+      >
+        <div style={{ position: "relative" }}>
+          <input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Rechercher un code…"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            style={{
+              width: "100%",
+              fontSize: 14,
+              padding: "10px 36px 10px 12px",
+              borderRadius: 10,
+              border: "1px solid var(--color-border)",
+              fontFamily: "ui-monospace, SFMono-Regular, monospace",
+              boxSizing: "border-box",
+            }}
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery("")}
+              aria-label="Vider la recherche"
+              style={{
+                position: "absolute",
+                right: 8,
+                top: "50%",
+                transform: "translateY(-50%)",
+                background: "none",
+                border: "none",
+                color: "var(--color-text-muted)",
+                fontSize: 16,
+                cursor: "pointer",
+                padding: 4,
+              }}
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Manual add */}
@@ -180,6 +253,8 @@ export function ScanList({
             onChange={(e) => setManualCode(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleManualAdd()}
             placeholder="Ajouter un code manuellement…"
+            inputMode="numeric"
+            pattern="[0-9]*"
             style={{
               flex: 1,
               fontSize: 15,
@@ -207,7 +282,14 @@ export function ScanList({
           </button>
         </div>
         {manualFeedback && (
-          <div style={{ fontSize: 12.5, color: "var(--color-text-muted)" }}>
+          <div
+            style={{
+              fontSize: 12.5,
+              color: "#16a34a",
+              fontWeight: 600,
+              transition: "opacity 0.2s ease",
+            }}
+          >
             {manualFeedback}
           </div>
         )}
@@ -215,7 +297,7 @@ export function ScanList({
 
       {/* Scan list */}
       <div style={{ overflowY: "auto", flex: 1, padding: "8px 12px" }}>
-        {scans.length === 0 && (
+        {filteredScans.length === 0 && (
           <div
             style={{
               display: "flex",
@@ -231,11 +313,13 @@ export function ScanList({
           >
             <TicketIcon size={40} />
             <div style={{ fontSize: 15 }}>
-              Aucun ticket scanné pour l'instant.
+              {searchQuery.trim()
+                ? "Aucun résultat pour cette recherche."
+                : "Aucun ticket scanné pour l'instant."}
             </div>
           </div>
         )}
-        {scans.map((s) => (
+        {filteredScans.map((s) => (
           <div
             key={s.id}
             style={{

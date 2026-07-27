@@ -27,10 +27,10 @@ def verify_password(password: str, password_hash: str) -> bool:
     return pwd_context.verify(password, password_hash)
 
 
-def create_access_token(user_id: str, role: str) -> str:
+def create_access_token(user_id: str, role: str) -> tuple[str, float]:
     expire = time.time() + settings.JWT_EXPIRE_MINUTES * 60
     payload = {"sub": user_id, "role": role, "exp": expire}
-    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM), expire
 
 
 def _decode_token(token: str) -> dict:

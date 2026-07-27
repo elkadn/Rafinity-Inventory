@@ -44,6 +44,7 @@ export function useBarcodeScanner({
   const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
   const [activeInventory, setActiveInventory] =
     useState<ActiveInventoryDto | null>(null);
+  const [ocrInProgress, setOcrInProgress] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement>(document.createElement("canvas"));
   const seenRef = useRef(new SeenCodesTracker());
@@ -196,43 +197,21 @@ const scanFrozenRef = useRef(false);
     hydrate();
   }, [hydrate]);
 
-  const attemptOcrFallback = useCallback(
-    async (canvas: HTMLCanvasElement) => {
-      if (ocrInFlightRef.current || !token) return;
+  const runOcrOnImage = useCallback(
+    async (blob: Blob): Promise<{ ok: boolean; error?: string }> => {
+      if (ocrInFlightRef.current || !token) {
+        return { ok: false, error: "Analyse déjà en cours." };
+      }
       const now = Date.now();
-      if (now - lastOcrAttemptRef.current < OCR_COOLDOWN_MS) return;
+      if (now - lastOcrAttemptRef.current < OCR_COOLDOWN_MS) {
+        return { ok: false, error: "Veuillez patienter un instant." };
+      }
       lastOcrAttemptRef.current = now;
       ocrInFlightRef.current = true;
+      setStatus({ kind: "ocr" });
+      setOcrInProgress(true);
       try {
-        const roi = roiInPixels(canvas.width, canvas.height);
-        const cropCanvas = document.createElement("canvas");
-        cropCanvas.width = roi.width;
-        cropCanvas.height = roi.height;
-        const cropCtx = cropCanvas.getContext("2d");
-        if (!cropCtx) return;
-        cropCtx.drawImage(
-          canvas,
-          roi.x,
-          roi.y,
-          roi.width,
-          roi.height,
-          0,
-          0,
-          roi.width,
-          roi.height,
-        );
-        const blob: Blob | null = await new Promise((resolve) =>
-          cropCanvas.toBlob(resolve, "image/jpeg", 0.85),
-        );
-        if (!blob) return;
-
         const result = await ocrFallback(token, blob);
-
-        // blob_count > 1: multiple tickets in frame, user needs to zoom in
-        if ((result.blob_count ?? 0) > 1) {
-          setStatus({ kind: "too_far_or_blurry" });
-          return;
-        }
 
         if (result.code) {
           if (!seenRef.current.hasSeen(result.code)) {
@@ -241,15 +220,54 @@ const scanFrozenRef = useRef(false);
           } else {
             setStatus({ kind: "already_scanned", code: result.code });
           }
+          return { ok: true };
         }
+
+        if ((result.blob_count ?? 0) > 1) {
+          setStatus({ kind: "too_far_or_blurry" });
+          return { ok: true };
+        }
+
+        setStatus({ kind: "too_far_or_blurry" });
+        return { ok: true };
       } catch (err) {
         console.error("OCR fallback failed:", err);
+        setStatus({ kind: "camera_error", message: "Échec de l'analyse OCR" });
+        return { ok: false, error: "Échec de l'analyse OCR" };
       } finally {
         ocrInFlightRef.current = false;
+        setOcrInProgress(false);
       }
     },
     [token, registerNewCode],
   );
+
+  const captureFrameForOcr = useCallback(async (): Promise<{ blob: Blob | null; previewUrl: string | null }> => {
+    const video = videoRef.current;
+    if (!video) return { blob: null, previewUrl: null };
+
+    const width = video.videoWidth || 1280;
+    const height = video.videoHeight || 720;
+    const roi = roiInPixels(width, height);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(roi.width);
+    canvas.height = Math.round(roi.height);
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return { blob: null, previewUrl: null };
+
+    ctx.drawImage(video, roi.x, roi.y, roi.width, roi.height, 0, 0, roi.width, roi.height);
+    const blob: Blob | null = await new Promise((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", 0.9),
+    );
+
+    if (!blob) return { blob: null, previewUrl: null };
+
+    return {
+      blob,
+      previewUrl: URL.createObjectURL(blob),
+    };
+  }, [videoRef]);
 
   const tick = useCallback(async () => {
       if (scanFrozenRef.current) return; // ← pause pendant le flash
@@ -297,12 +315,6 @@ const scanFrozenRef = useRef(false);
           roi.height,
         );
         setStatus({ kind: "too_far_or_blurry" });
-        if (
-          missCountRef.current >= MISS_TICKS_BEFORE_OCR &&
-          sharpness >= SHARPNESS_BLUR_THRESHOLD
-        ) {
-          void attemptOcrFallback(canvas);
-        }
       } else {
         setStatus((prev) =>
           prev.kind === "success" ? prev : { kind: "scanning" },
@@ -311,7 +323,7 @@ const scanFrozenRef = useRef(false);
     } finally {
       isProcessingRef.current = false;
     }
-  }, [videoRef, registerNewCode, attemptOcrFallback]);
+  }, [videoRef, registerNewCode]);
 
   useEffect(() => {
     if (!isRunning || !token) {
@@ -393,11 +405,21 @@ const scanFrozenRef = useRef(false);
   // Filter out deleted scans from the visible list
   const visibleScans = scans.filter((s) => !deletedIds.has(s.id));
 
+  const triggerOcr = useCallback(async () => {
+    const { blob } = await captureFrameForOcr();
+    if (!blob) return;
+    await runOcrOnImage(blob);
+  }, [captureFrameForOcr, runOcrOnImage]);
+
   return {
     status,
     scans: visibleScans,
     addManualCode,
     deleteScanById,
     activeInventory,
+    triggerOcr,
+    ocrInProgress,
+    captureFrameForOcr,
+    runOcrOnImage,
   };
 }
