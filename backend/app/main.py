@@ -8,8 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.db import connect_and_init, close
 from app.schemas import HealthResponse
-from app.routes import auth, scans, admin
-
+from app.routes import auth, scans, admin, video
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -26,8 +25,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(scans.router)
 app.include_router(admin.router)
-
-
+app.include_router(video.router)
 # @app.on_event("startup")
 # async def on_startup() -> None:
 #     await connect_and_init()

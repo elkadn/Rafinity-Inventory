@@ -305,3 +305,44 @@ export async function adminListDeletions(
   const res = await fetch(url.toString(), { headers: authHeaders(token) });
   return handle(res);
 }
+
+
+
+// --------------------------------------------------------------------- //
+// Video extraction
+// --------------------------------------------------------------------- //
+export interface VideoCodeResult {
+  code: string;
+  frame_hits: number;
+  added: boolean;
+  reason: string | null;
+}
+
+export interface VideoExtractionResponse {
+  total_frames_processed: number;
+  duration_seconds: number;
+  total_frames_skipped_blur: number;
+  codes_found: VideoCodeResult[];
+  total_added: number;
+  total_duplicates: number;
+  processing_time_ms: number;
+  inventory_date: string;
+  error: string | null;
+}
+
+export async function extractFromVideo(
+  token: string,
+  file: File,
+  onProgress?: (phase: string) => void
+): Promise<VideoExtractionResponse> {
+  onProgress?.("Envoi de la vidéo…");
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API_BASE}/video/extract`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: form,
+  });
+  onProgress?.("Traitement en cours…");
+  return handle<VideoExtractionResponse>(res);
+}

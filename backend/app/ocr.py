@@ -209,12 +209,12 @@ def _ocr_easyocr(
     gray: np.ndarray,
     settings: Settings,
     allowlist: str = "0123456789",
+    quick: bool = False,
 ) -> List[str]:
     """
     EasyOCR strategy:
-    - Try at 0° first (most common case: phone held upright over ticket).
-    - If nothing found, try -90° and 90° (landscape phone or sideways ticket).
-    - No need for 180° in practice (user won't hold phone upside down).
+    - Fast path: one pass at 0° for the common case, which is usually enough.
+    - Full path: try 0°, -90°, 90°, 180° only if the fast path fails.
     - EasyOCR handles slight skew (~15°) internally, so we don't need a
       dense rotation sweep like we did with Tesseract.
     """
@@ -224,8 +224,9 @@ def _ocr_easyocr(
 
     up = _upscale(gray, 400)
     candidates: List[str] = []
+    angles = [0] if quick else [0, -90, 90, 180]
 
-    for angle in [0, -90, 90, 180]:
+    for angle in angles:
         rotated = _rotate(up, angle)
         try:
             results = reader.readtext(
@@ -233,7 +234,6 @@ def _ocr_easyocr(
                 detail=1,
                 allowlist=allowlist,
                 paragraph=False,
-                # batch_size=1 ensures low memory use on CPU
                 batch_size=1,
             )
         except Exception as e:
@@ -246,16 +246,11 @@ def _ocr_easyocr(
                 continue
             for m in _DIGIT_RE.findall(text):
                 if settings.CODE_MIN_DIGITS <= len(m) <= settings.CODE_MAX_DIGITS:
-                    # Weight by OCR confidence: add the value multiple times
-                    # proportional to confidence so high-confidence reads
-                    # dominate the majority vote.
                     weight = max(1, int(conf * 5))
                     hits.extend([m] * weight)
 
         candidates.extend(hits)
 
-        # Early exit: if we have a strong confident read at this angle,
-        # don't bother trying other rotations.
         if hits:
             counter = Counter(hits)
             top_value, top_count = counter.most_common(1)[0]
@@ -279,7 +274,7 @@ def _codes_match_with_08(a: str, b: str) -> bool:
 
 
 def _confirm_code_from_top_bottom(
-    gray: np.ndarray, settings: Settings
+    gray: np.ndarray, settings: Settings, quick: bool = False
 ) -> Tuple[Optional[str], Optional[float]]:
     h = gray.shape[0]
     if h < 60:
@@ -291,10 +286,15 @@ def _confirm_code_from_top_bottom(
     bottom = gray[bot_y:, :]
 
     top_codes = list(dict.fromkeys(
-        _ocr_easyocr(top, settings, allowlist="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-"),
+        _ocr_easyocr(
+            top,
+            settings,
+            allowlist="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-",
+            quick=quick,
+        ),
     ))
     bottom_codes = list(dict.fromkeys(
-        _ocr_easyocr(bottom, settings, allowlist="0123456789"),
+        _ocr_easyocr(bottom, settings, allowlist="0123456789", quick=quick),
     ))
 
     if not top_codes or not bottom_codes:
@@ -319,7 +319,7 @@ def _confirm_code_from_top_bottom(
     return None, None
 
 
-def _ocr_tesseract(gray: np.ndarray, settings: Settings) -> List[str]:
+def _ocr_tesseract(gray: np.ndarray, settings: Settings, quick: bool = False) -> List[str]:
     """Tesseract fallback (used if EasyOCR is not installed)."""
     import pytesseract
 
@@ -328,10 +328,11 @@ def _ocr_tesseract(gray: np.ndarray, settings: Settings) -> List[str]:
     _, otsu = cv2.threshold(clahe, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     candidates: List[str] = []
 
-    for angle in [0, -90, 90, 180]:
+    angles = [0] if quick else [0, -90, 90, 180]
+    for angle in angles:
         for variant in (clahe, otsu):
             rotated = _rotate(variant, angle)
-            for psm in (6, 7, 11):
+            for psm in (6, 7) if quick else (6, 7, 11):
                 cfg = f"--psm {psm} -c tessedit_char_whitelist=0123456789"
                 try:
                     text = pytesseract.image_to_string(rotated, config=cfg).strip()
@@ -391,11 +392,18 @@ def read_code_from_crop(
     blobs = _find_label_blobs(gray)
     blob_count = len(blobs)
 
-    # Try top/bottom label confirmation first for tickets with a BA-xxxxxx
-    # label above and a numeric label below. This helps resolve 0/8 ambiguity.
     if blob_count <= 1:
+        quick_candidates = _ocr_easyocr(gray, settings, quick=True)
+        if quick_candidates:
+            counter = Counter(quick_candidates)
+            best_value, best_count = counter.most_common(1)[0]
+            confidence = round(best_count / len(quick_candidates), 3)
+            return best_value, confidence, blob_count
+
+        # Try top/bottom label confirmation first for tickets with a BA-xxxxxx
+        # label above and a numeric label below. This helps resolve 0/8 ambiguity.
         confirmed_code, confirmed_confidence = _confirm_code_from_top_bottom(
-            gray, settings
+            gray, settings, quick=True
         )
         if confirmed_code:
             return confirmed_code, confirmed_confidence, blob_count
@@ -409,7 +417,7 @@ def read_code_from_crop(
 
     candidates: List[str] = []
     for target in targets:
-        candidates.extend(_ocr_easyocr(target, settings))
+        candidates.extend(_ocr_easyocr(target, settings, quick=False))
         if candidates:
             break
 

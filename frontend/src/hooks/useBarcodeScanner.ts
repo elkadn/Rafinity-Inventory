@@ -26,7 +26,7 @@ const SHARPNESS_BLUR_THRESHOLD = 8;
 // Poll the active inventory every 30s so the scanner picks up changes
 // made by the admin without requiring a page reload.
 const INVENTORY_POLL_INTERVAL_MS = 30_000;
-const SUCCESS_FLASH_MS = 2000; // était 900
+const SUCCESS_FLASH_MS = 1500; // était 900
 
 interface UseBarcodeScannerOptions {
   videoRef: RefObject<HTMLVideoElement>;

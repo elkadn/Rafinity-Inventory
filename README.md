@@ -38,6 +38,7 @@ pip install -r requirements.txt
 pip uninstall bcrypt
 pip install bcrypt==4.0.1
 pip install openpyxl
+pip install zxing-cpp==2.2.0
 ```
 
 

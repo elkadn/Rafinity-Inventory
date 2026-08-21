@@ -11,7 +11,7 @@ class Settings:
     # different port than the backend.
     ALLOWED_ORIGINS = os.environ.get(
         "ALLOWED_ORIGINS",
-        "https://localhost:5173,https://192.168.1.89:5173",
+        "https://localhost:5173,https://192.168.1.51:5173",
     ).split(",")
 
     # ---- MongoDB ----

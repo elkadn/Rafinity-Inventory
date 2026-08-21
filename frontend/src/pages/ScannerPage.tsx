@@ -7,6 +7,7 @@ import { ScanList } from "../components/ScanList";
 import { CameraPermissionScreen } from "../components/CameraPermissionScreen";
 import { AiIcon, CameraIcon, ListIcon, StopIcon } from "../components/icons";
 import { initAudio } from "../lib/beep";
+import { Link } from "react-router-dom";
 
 export default function ScannerPage() {
   const { user, token, logout } = useAuth();
@@ -180,6 +181,27 @@ export default function ScannerPage() {
                 <CameraIcon size={19} />
                 Démarrer le scan
               </button>
+              <Link
+                to="/video"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                  background: "var(--color-bg)",
+                  color: "var(--color-text)",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: 999,
+                  padding: "13px 24px",
+                  fontSize: 15,
+                  fontWeight: 600,
+                  textDecoration: "none",
+                  width: "100%",
+                }}
+              >
+                🎬 Scanner une vidéo
+              </Link>
+
               <button
                 className="scan-list-btn"
                 onClick={() => setShowList(true)}
@@ -341,7 +363,14 @@ export default function ScannerPage() {
             <p style={{ margin: "0 0 6px", fontWeight: 800, color: "#1f2937" }}>
               Prévisualisation du ticket
             </p>
-            <p style={{ margin: "0 0 12px", color: "#6b7280", fontSize: 14, lineHeight: 1.5 }}>
+            <p
+              style={{
+                margin: "0 0 12px",
+                color: "#6b7280",
+                fontSize: 14,
+                lineHeight: 1.5,
+              }}
+            >
               Vérifiez l’image, puis validez pour lancer l’analyse OCR.
             </p>
             <img

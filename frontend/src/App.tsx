@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from "./context/AuthContext";
 import LoginPage from "./pages/LoginPage";
 import ScannerPage from "./pages/ScannerPage";
 import AdminPage from "./pages/AdminPage";
+import VideoScanPage from "./pages/VideoScanPage";
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { token, isLoading } = useAuth();
@@ -76,6 +77,17 @@ export default function App() {
               </RequireAdmin>
             }
           />
+          <Route
+            path="/video"
+            element={
+              <RequireAuth>
+                <VideoScanPage />
+              </RequireAuth>
+            }
+          />
+
+          
+
           <Route path="*" element={<Navigate to="/scan" replace />} />
         </Routes>
       </AuthProvider>
