@@ -14,7 +14,7 @@ create table app_users (
   constraint ck_app_users_statut check (statut in ('actif','inactif'))
 );
 
-SELECT username, role,password_hash FROM app_users;
+SELECT id FROM app_users where username = 'testo';
 
 create table app_scans (
   id varchar2(32) primary key,
@@ -29,6 +29,10 @@ create table app_scans (
   constraint ck_app_scans_method check (method in ('barcode','ocr','manuel')),
   constraint uq_app_scans_business unique (user_id, code, inventory_date)
 );
+
+
+select code from app_scans where user_id = '3f707b2b415c4faa836f79f2c5101fc7';
+and inventory_date = '2023-06-01';
 
 create table app_config (
   id varchar2(100) primary key,

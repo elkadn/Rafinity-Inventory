@@ -44,6 +44,7 @@ export default function VideoScanPage() {
   const [cameraOpen, setCameraOpen] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [requestDurationMs, setRequestDurationMs] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
@@ -125,11 +126,13 @@ export default function VideoScanPage() {
 
   const processFile = async (file: File) => {
     if (!token) return;
+    const requestStartedAt = performance.now();
     setPhase({ kind: "uploading", phase: "Envoi de la vidéo…" });
     try {
       const result = await extractFromVideo(token, file, (msg) =>
         setPhase({ kind: "uploading", phase: msg })
       );
+      setRequestDurationMs(Math.round(performance.now() - requestStartedAt));
       if (result.error) {
         setPhase({ kind: "error", message: result.error });
       } else {
@@ -152,6 +155,7 @@ export default function VideoScanPage() {
     if (isRecording) stopRecording();
     stopCamera();
     setCameraOpen(false);
+    setRequestDurationMs(null);
     setPhase({ kind: "idle" });
     if (inputRef.current) inputRef.current.value = "";
   };
@@ -299,7 +303,7 @@ export default function VideoScanPage() {
 
         {/* Results */}
         {phase.kind === "done" && (
-          <ResultsView result={phase.result} onReset={handleReset} />
+          <ResultsView result={phase.result} requestDurationMs={requestDurationMs} onReset={handleReset} />
         )}
       </main>
     </div>
@@ -307,8 +311,8 @@ export default function VideoScanPage() {
 }
 
 // ------------------------------------------------------------------ //
-function ResultsView({ result, onReset }: { result: VideoExtractionResponse; onReset: () => void }) {
-  const [showDuplicates, setShowDuplicates] = useState(false);
+function ResultsView({ result, requestDurationMs, onReset }: { result: VideoExtractionResponse; requestDurationMs: number | null; onReset: () => void }) {
+  const [showDuplicates, setShowDuplicates] = useState(true);
   const added = result.codes_found.filter((c) => c.added);
   const duplicates = result.codes_found.filter((c) => !c.added);
   const displayed = showDuplicates ? result.codes_found : added;
@@ -337,7 +341,10 @@ function ResultsView({ result, onReset }: { result: VideoExtractionResponse; onR
             {sharpPct < 50 && " — filmez plus lentement pour de meilleurs résultats"}
           </span>
         )}
-        <span>🔄 Traitement : <strong>{formatDuration(result.processing_time_ms)}</strong></span>
+        <span>🔄 Backend : <strong>{formatDuration(result.processing_time_ms)}</strong></span>
+        {requestDurationMs !== null && (
+          <span>⏱ Total navigateur : <strong>{formatDuration(requestDurationMs)}</strong></span>
+        )}
       </div>
 
       {/* Actions */}
