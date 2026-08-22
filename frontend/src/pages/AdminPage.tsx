@@ -895,20 +895,28 @@ function InventoryView({
   const { token } = useAuth();
   const [date, setDate] = useState(activeInventory?.inventory_date ?? "");
   const [label, setLabel] = useState(activeInventory?.label ?? "");
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timeout = window.setTimeout(() => setToast(null), 3000);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
 
   const handleSet = async () => {
     if (!token || !date) return;
-    setFeedback(null);
     try {
       const inv = await adminSetInventory(token, {
         inventory_date: date,
         label: label || undefined,
       });
       onChanged(inv);
-      setFeedback(`Inventaire actif défini sur ${date}.`);
+      setToast({ type: "success", message: `Inventaire actif défini sur ${date}.` });
     } catch (err) {
-      setFeedback(err instanceof Error ? err.message : "Erreur");
+      setToast({
+        type: "error",
+        message: err instanceof Error ? err.message : "Erreur lors de la mise à jour de l'inventaire.",
+      });
     }
   };
 
@@ -920,9 +928,16 @@ function InventoryView({
       )
     )
       return;
-    await adminClearInventory(token);
-    onChanged(null);
-    setFeedback("Inventaire actif supprimé.");
+    try {
+      await adminClearInventory(token);
+      onChanged(null);
+      setToast({ type: "success", message: "Inventaire actif supprimé." });
+    } catch (err) {
+      setToast({
+        type: "error",
+        message: err instanceof Error ? err.message : "Erreur lors de la suppression de l'inventaire.",
+      });
+    }
   };
 
   return (
@@ -1011,7 +1026,6 @@ function InventoryView({
         >
           Activer cet inventaire
         </PrimaryButton>
-        {feedback && <div style={feedbackStyle}>{feedback}</div>}
       </div>
 
       <p style={hintTextStyle}>
@@ -1020,6 +1034,29 @@ function InventoryView({
         scan). Les scanners connectés détectent le changement en moins de 30
         secondes automatiquement.
       </p>
+
+      {toast && (
+        <div
+          style={{
+            position: "fixed",
+            top: 18,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 2000,
+            padding: "12px 16px",
+            borderRadius: 12,
+            background: toast.type === "success" ? "#2f7d32" : "#b23a3a",
+            color: "#fff",
+            boxShadow: "0 12px 28px rgba(22, 20, 18, 0.22)",
+            fontWeight: 700,
+            fontSize: 13.5,
+            maxWidth: "min(90vw, 420px)",
+            wordBreak: "break-word",
+          }}
+        >
+          {toast.message}
+        </div>
+      )}
     </div>
   );
 }
@@ -1349,8 +1386,10 @@ function DeletionsView() {
 
 // --------------------------------------------------------------------- //
 function UserManagementView() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [users, setUsers] = useState<AuthUserDto[]>([]);
+  const [passwordDrafts, setPasswordDrafts] = useState<Record<string, string>>({});
+  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [form, setForm] = useState({
     username: "",
     password: "",
@@ -1359,16 +1398,24 @@ function UserManagementView() {
     role: "scanner" as "scanner" | "admin",
     ip_poste: "",
   });
-  const [feedback, setFeedback] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timeout = window.setTimeout(() => setToast(null), 3000);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
 
   const load = () => {
     if (token) adminListUsers(token).then(setUsers);
   };
   useEffect(load, [token]);
 
+  const showToast = (type: "success" | "error", message: string) => {
+    setToast({ type, message });
+  };
+
   const handleCreate = async () => {
     if (!token) return;
-    setFeedback(null);
     try {
       await adminCreateUser(token, {
         ...form,
@@ -1382,10 +1429,11 @@ function UserManagementView() {
         role: "scanner",
         ip_poste: "",
       });
-      setFeedback("Utilisateur créé.");
+      showToast("success", "Utilisateur créé avec succès.");
       load();
     } catch (err) {
-      setFeedback(
+      showToast(
+        "error",
         err instanceof Error ? err.message : "Erreur lors de la création.",
       );
     }
@@ -1393,10 +1441,44 @@ function UserManagementView() {
 
   const toggleStatus = async (u: AuthUserDto) => {
     if (!token) return;
-    await adminUpdateUser(token, u.id, {
-      statut: u.statut === "actif" ? "inactif" : "actif",
-    });
-    load();
+    if (u.id === user?.id) {
+      showToast("error", "L'administrateur courant ne peut pas être désactivé.");
+      return;
+    }
+    try {
+      await adminUpdateUser(token, u.id, {
+        statut: u.statut === "actif" ? "inactif" : "actif",
+      });
+      showToast(
+        "success",
+        `${u.username} est maintenant ${u.statut === "actif" ? "inactif" : "actif"}.`,
+      );
+      load();
+    } catch (err) {
+      showToast(
+        "error",
+        err instanceof Error ? err.message : "Erreur lors du changement de statut.",
+      );
+    }
+  };
+
+  const changePassword = async (u: AuthUserDto) => {
+    if (!token) return;
+    const nextPassword = (passwordDrafts[u.id] ?? "").trim();
+    if (!nextPassword) {
+      showToast("error", `Saisissez un mot de passe pour ${u.username}.`);
+      return;
+    }
+    try {
+      await adminUpdateUser(token, u.id, { password: nextPassword });
+      setPasswordDrafts((current) => ({ ...current, [u.id]: "" }));
+      showToast("success", `Mot de passe mis à jour pour ${u.username}.`);
+    } catch (err) {
+      showToast(
+        "error",
+        err instanceof Error ? err.message : "Erreur lors du changement de mot de passe.",
+      );
+    }
   };
 
   return (
@@ -1479,49 +1561,114 @@ function UserManagementView() {
         <PrimaryButton onClick={handleCreate} style={{ marginTop: 16 }}>
           Créer l'utilisateur
         </PrimaryButton>
-        {feedback && <div style={feedbackStyle}>{feedback}</div>}
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {users.map((u) => (
-          <div key={u.id} style={userRowStyle}>
-            <div>
-              <div
-                style={{ fontWeight: 700, fontSize: 14.5, color: "#2b2a22" }}
-              >
-                {u.prenom} {u.nom}{" "}
-                <span style={{ fontWeight: 400, color: "#9a927a" }}>
-                  ({u.username})
-                </span>
+        {users.map((u) => {
+          const isCurrentAdmin = u.id === user?.id;
+          return (
+            <div key={u.id} style={userRowStyle}>
+              <div>
+                <div
+                  style={{ fontWeight: 700, fontSize: 14.5, color: "#2b2a22" }}
+                >
+                  {u.prenom} {u.nom}{" "}
+                  <span style={{ fontWeight: 400, color: "#9a927a" }}>
+                    ({u.username})
+                  </span>
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    marginTop: 6,
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <StatusBadge tone={u.role === "admin" ? "info" : "neutral"}>
+                    {u.role}
+                  </StatusBadge>
+                  <StatusBadge tone={u.statut === "actif" ? "success" : "danger"}>
+                    {u.statut}
+                  </StatusBadge>
+                  {isCurrentAdmin && (
+                    <StatusBadge tone="info">admin courant</StatusBadge>
+                  )}
+                  {u.ip_poste && (
+                    <span style={{ fontSize: 12, color: "#9a927a" }}>
+                      {u.ip_poste}
+                    </span>
+                  )}
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    marginTop: 10,
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <input
+                    className="admin-input"
+                    type="password"
+                    placeholder="Nouveau mot de passe"
+                    value={passwordDrafts[u.id] ?? ""}
+                    onChange={(e) =>
+                      setPasswordDrafts((current) => ({
+                        ...current,
+                        [u.id]: e.target.value,
+                      }))
+                    }
+                    style={{
+                      ...inputStyle,
+                      width: 200,
+                      minWidth: 160,
+                    }}
+                  />
+                  <PrimaryButton onClick={() => changePassword(u)} style={{ padding: "8px 12px" }}>
+                    Changer le mot de passe
+                  </PrimaryButton>
+                </div>
               </div>
-              <div
+              <GhostButton
+                onClick={() => toggleStatus(u)}
+                disabled={isCurrentAdmin}
                 style={{
-                  display: "flex",
-                  gap: 8,
-                  marginTop: 6,
-                  alignItems: "center",
-                  flexWrap: "wrap",
+                  opacity: isCurrentAdmin ? 0.45 : 1,
+                  cursor: isCurrentAdmin ? "not-allowed" : "pointer",
                 }}
               >
-                <StatusBadge tone={u.role === "admin" ? "info" : "neutral"}>
-                  {u.role}
-                </StatusBadge>
-                <StatusBadge tone={u.statut === "actif" ? "success" : "danger"}>
-                  {u.statut}
-                </StatusBadge>
-                {u.ip_poste && (
-                  <span style={{ fontSize: 12, color: "#9a927a" }}>
-                    {u.ip_poste}
-                  </span>
-                )}
-              </div>
+                {u.statut === "actif" ? "Désactiver" : "Activer"}
+              </GhostButton>
             </div>
-            <GhostButton onClick={() => toggleStatus(u)}>
-              {u.statut === "actif" ? "Désactiver" : "Activer"}
-            </GhostButton>
-          </div>
-        ))}
+          );
+        })}
       </div>
+
+      {toast && (
+        <div
+          style={{
+            position: "fixed",
+            top: 18,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 2000,
+            padding: "12px 16px",
+            borderRadius: 12,
+            background: toast.type === "success" ? "#2f7d32" : "#b23a3a",
+            color: "#fff",
+            boxShadow: "0 12px 28px rgba(22, 20, 18, 0.22)",
+            fontWeight: 700,
+            fontSize: 13.5,
+            maxWidth: "min(90vw, 420px)",
+            wordBreak: "break-word",
+          }}
+        >
+          {toast.message}
+        </div>
+      )}
     </div>
   );
 }
@@ -1679,12 +1826,26 @@ function PrimaryButton({
 function GhostButton({
   onClick,
   children,
+  disabled,
+  style,
 }: {
   onClick: () => void;
   children: ReactNode;
+  disabled?: boolean;
+  style?: CSSProperties;
 }) {
   return (
-    <button className="admin-ghost-btn" onClick={onClick} style={ghostBtnStyle}>
+    <button
+      className="admin-ghost-btn"
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        ...ghostBtnStyle,
+        ...style,
+        opacity: disabled ? 0.55 : 1,
+        cursor: disabled ? "not-allowed" : "pointer",
+      }}
+    >
       {children}
     </button>
   );

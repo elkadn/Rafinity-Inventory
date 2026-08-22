@@ -15,6 +15,7 @@ import {
   DownloadIcon,
   StopIcon,
 } from "../components/icons";
+import { ArrowLeft } from "lucide-react";
 
 const MAX_RECORDING_SECONDS = 60;
 
@@ -275,8 +276,20 @@ export default function VideoScanPage() {
           <strong>Scan vidéo</strong>
         </div>
         <div style={{ display: "flex", gap: 16, fontSize: 13.5 }}>
-          <Link to="/scan" style={{ color: "var(--color-info)" }}>
-            ← Scanner en direct
+          <Link
+            to="/"
+            style={{
+              color: "var(--color-info)",
+              textDecoration: "none",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "8px",
+              fontSize: "14px",
+              fontWeight: 500,
+            }}
+          >
+            <ArrowLeft size={17} strokeWidth={1.8} />
+            Retour à l’accueil
           </Link>
           {user?.role === "admin" && (
             <Link to="/admin" style={{ color: "var(--color-info)" }}>

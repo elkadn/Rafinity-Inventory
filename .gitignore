@@ -8,6 +8,8 @@ backend/.mypy_cache/
 backend/.env
 backend/video_debug/
 backend/video_jobs/
+backend/tests/
+
 *.pyc
 
 # Node

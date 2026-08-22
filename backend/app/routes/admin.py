@@ -250,9 +250,20 @@ async def create_user(payload: UserCreate) -> UserPublic:
 
 
 @router.patch("/users/{user_id}", response_model=UserPublic)
-async def update_user(user_id: str, payload: UserUpdate) -> UserPublic:
+async def update_user(
+    user_id: str,
+    payload: UserUpdate,
+    admin: UserPublic = Depends(require_admin),
+) -> UserPublic:
     db = get_db()
     updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+
+    if user_id == admin.id and "statut" in updates and updates["statut"] == "inactif":
+        raise HTTPException(
+            status_code=403,
+            detail="L'administrateur courant ne peut pas être désactivé.",
+        )
+
     if "password" in updates:
         updates["password_hash"] = hash_password(updates.pop("password"))
     if updates:

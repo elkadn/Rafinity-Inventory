@@ -14,7 +14,7 @@ create table app_users (
   constraint ck_app_users_statut check (statut in ('actif','inactif'))
 );
 
-SELECT id FROM app_users where username = 'testo';
+SELECT statut FROM app_users where username = 'admin';
 
 create table app_scans (
   id varchar2(32) primary key,
