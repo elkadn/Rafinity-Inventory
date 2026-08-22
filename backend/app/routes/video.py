@@ -35,10 +35,8 @@ import numpy as np
 import zxingcpp
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
-from pymongo.errors import DuplicateKeyError
-
 from app.auth import get_current_user
-from app.db import get_db
+from app.db import DuplicateKeyError, get_db
 from app.routes.scans import _get_active_inventory, _today
 from app.schemas import ScanRecord, UserPublic, new_id
 

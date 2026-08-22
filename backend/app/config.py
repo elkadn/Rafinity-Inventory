@@ -11,12 +11,15 @@ class Settings:
     # different port than the backend.
     ALLOWED_ORIGINS = os.environ.get(
         "ALLOWED_ORIGINS",
-        "https://localhost:5173,https://192.168.1.51:5173",
+        "https://localhost:5173,https://192.168.3.75:5173",
     ).split(",")
 
-    # ---- MongoDB ----
-    MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
-    MONGODB_DB_NAME = os.environ.get("MONGODB_DB_NAME", "ticket_scanner")
+    # ---- Oracle ----
+    ORACLE_USER = os.environ.get("ORACLE_USER", "inventory_user")
+    ORACLE_PASSWORD = os.environ.get("ORACLE_PASSWORD", "elkadn")
+    ORACLE_DSN = os.environ.get("ORACLE_DSN", "localhost:1521/FREEPDB1")
+    ORACLE_POOL_MIN = int(os.environ.get("ORACLE_POOL_MIN", "1"))
+    ORACLE_POOL_MAX = int(os.environ.get("ORACLE_POOL_MAX", "5"))
 
     # ---- Auth / JWT ----
     # IMPORTANT: override JWT_SECRET via environment variable in production -

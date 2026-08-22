@@ -1,17 +1,15 @@
-# Scanner de tickets - v2 (authentification, MongoDB, administration)
+# Scanner de tickets - v2 (authentification, Oracle, administration)
 
 ```
 ticket_scanner/
-├── backend/          FastAPI - auth JWT, MongoDB (motor), OCR de secours
+├── backend/          FastAPI - auth JWT, Oracle, OCR de secours
 ├── frontend/         React + Vite + TS - login, scan, admin
-├── docker-compose.yml MongoDB + backend + Caddy (HTTPS interne)
-└── caddy/Caddyfile   sert le frontend + proxy vers le backend, HTTPS manuel
 ```
 
 ## Ce qui a changé par rapport à la v1
 
 - **Authentification** obligatoire (JWT) - fini les sessions anonymes.
-- **MongoDB** persiste chaque scan immédiatement (plus de perte de données si
+- **Oracle** persiste chaque scan immédiatement (plus de perte de données si
   le serveur redémarre brutalement).
 - **Interface admin** : parcourir les scans par jour puis par utilisateur,
   fusionner une journée, exporter en CSV.
@@ -22,11 +20,11 @@ ticket_scanner/
 
 ## Installation - développement local
 
-### 1. MongoDB (le plus simple : juste ce conteneur, en dev)
+### 1. Oracle externe de l'entreprise
 
-```bash
-docker run -d --name mongo -p 27017:27017 -v mongo_dev_data:/data/db mongo:7
-```
+La base Oracle n'est pas lancée par Docker. Exécutez manuellement
+`backend/sql/oracle_schema.sql` avec le compte applicatif Oracle fourni par
+l'entreprise. Le script utilise une syntaxe compatible Oracle 12c.
 
 ### 2. Backend
 
@@ -50,7 +48,9 @@ brew install tesseract                                       # macOS
 
 Variables d'environnement (créez `backend/.env` ou exportez-les) :
 ```bash
-export MONGODB_URI="mongodb://localhost:27017"
+export ORACLE_USER="ticket_scanner"
+export ORACLE_PASSWORD="ticket_scanner"
+export ORACLE_DSN="serveur-oracle:1521/NOM_SERVICE"
 export JWT_SECRET="une-longue-phrase-secrete-a-changer"
 ```
 
@@ -62,19 +62,18 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ### 3. Créer les premiers comptes (obligatoire avant toute connexion)
 
 Il n'existe volontairement aucun endpoint public pour créer le premier
-admin (ce serait une faille de sécurité en production). Utilisez le script
-CLI, depuis `backend/` avec le venv actif :
+admin (ce serait une faille de sécurité en production). Exécutez le script
+SQL avec SQL Developer ou SQL*Plus :
 
 ```bash
-python -m scripts.create_user --username admin --password "changeme123" \
-    --nom Admin --prenom Principal --role admin
-
-python -m scripts.create_user --username nora --password "elkadn" \
-    --nom Alaoui --prenom Nora --role scanner
-
-python -m scripts.create_user --username kaoutar --password "elkadn" \
-    --nom Benali --prenom Kaoutar --role scanner --ip-poste 192.168.1.42
+sqlplus inventory_user/mot_de_passe@SERVEUR:1521/NOM_SERVICE \
+  @sql/create_initial_users.sql
 ```
+
+Le script `backend/sql/create_initial_users.sql` crée `admin`, `scanner1`
+et `scanner2`. Il n'écrase pas les utilisateurs existants et affiche les
+comptes à la fin. Les mots de passe initiaux sont indiqués dans le script
+et doivent être changés après la première connexion.
 
 Ensuite, gérez les comptes (création, désactivation) directement depuis
 l'interface admin (`/admin` → onglet "Utilisateurs") une fois connecté.
@@ -141,8 +140,9 @@ Puis :
 docker compose up -d --build
 ```
 
-Cela démarre MongoDB (avec volume persistant), le backend, et Caddy en
-HTTPS sur le port 443 (et redirection automatique depuis le port 80).
+Cela démarre uniquement le backend et Caddy en HTTPS sur le port 443
+(et redirection automatique depuis le port 80). Oracle reste hébergé
+séparément sur le serveur de base de données de l'entreprise.
 
 ### Étape 4 - Créer les comptes en production
 

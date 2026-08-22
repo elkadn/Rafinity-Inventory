@@ -4,11 +4,9 @@ import logging
 import time
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from pymongo.errors import DuplicateKeyError
-
 from app.auth import get_current_user
 from app.config import settings
-from app.db import get_db
+from app.db import DuplicateKeyError, get_db
 from app.ocr import read_code_from_crop
 from app.schemas import (
     DeletionRecord,

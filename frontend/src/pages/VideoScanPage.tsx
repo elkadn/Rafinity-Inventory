@@ -1,9 +1,12 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { extractFromVideo, type VideoExtractionResponse } from "../lib/api";
-import { BarcodeIcon, DownloadIcon, TicketIcon } from "../components/icons";
+import { useCamera } from "../hooks/useCamera";
+import { BarcodeIcon, CameraIcon, DownloadIcon, StopIcon, TicketIcon } from "../components/icons";
+
+const MAX_RECORDING_SECONDS = 60;
 
 type Phase =
   | { kind: "idle" }
@@ -38,7 +41,24 @@ function formatDuration(ms: number): string {
 export default function VideoScanPage() {
   const { token, user } = useAuth();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordingChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<number | null>(null);
+  const { videoRef, isRunning, error: cameraError, permissionState, start: startCamera, stop: stopCamera } = useCamera();
+
+  useEffect(() => () => {
+    if (recordingTimerRef.current !== null) window.clearInterval(recordingTimerRef.current);
+    recorderRef.current?.stop();
+    stopCamera();
+  }, [stopCamera]);
+
+  useEffect(() => {
+    if (cameraOpen && !isRunning) void startCamera();
+  }, [cameraOpen, isRunning, startCamera]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -53,9 +73,58 @@ export default function VideoScanPage() {
     setPhase({ kind: "selected", file });
   };
 
-  const handleProcess = async () => {
-    if (phase.kind !== "selected" || !token) return;
-    const file = phase.file;
+  const handleOpenCamera = () => {
+    setCameraOpen(true);
+  };
+
+  const handleCloseCamera = () => {
+    if (isRecording) stopRecording();
+    stopCamera();
+    setCameraOpen(false);
+  };
+
+  const startRecording = () => {
+    const stream = videoRef.current?.srcObject as MediaStream | null;
+    if (!stream || !isRunning || !window.MediaRecorder) return;
+
+    const mimeType = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"]
+      .find((type) => MediaRecorder.isTypeSupported(type)) ?? "";
+    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    recordingChunksRef.current = [];
+    recorderRef.current = recorder;
+    setRecordingSeconds(0);
+    setIsRecording(true);
+
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) recordingChunksRef.current.push(event.data);
+    };
+    recorder.onstop = () => {
+      const blob = new Blob(recordingChunksRef.current, { type: recorder.mimeType || "video/webm" });
+      const extension = recorder.mimeType.includes("mp4") ? "mp4" : "webm";
+      setIsRecording(false);
+      setRecordingSeconds(0);
+      setPhase({ kind: "selected", file: new File([blob], `capture-${Date.now()}.${extension}`, { type: blob.type }) });
+    };
+    recorder.start(1000);
+    recordingTimerRef.current = window.setInterval(() => {
+      setRecordingSeconds((seconds) => {
+        if (seconds + 1 >= MAX_RECORDING_SECONDS) {
+          recorder.stop();
+          if (recordingTimerRef.current !== null) window.clearInterval(recordingTimerRef.current);
+        }
+        return seconds + 1;
+      });
+    }, 1000);
+  };
+
+  function stopRecording() {
+    if (recordingTimerRef.current !== null) window.clearInterval(recordingTimerRef.current);
+    recordingTimerRef.current = null;
+    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+  }
+
+  const processFile = async (file: File) => {
+    if (!token) return;
     setPhase({ kind: "uploading", phase: "Envoi de la vidéo…" });
     try {
       const result = await extractFromVideo(token, file, (msg) =>
@@ -74,7 +143,15 @@ export default function VideoScanPage() {
     }
   };
 
+  const handleProcess = async () => {
+    if (phase.kind !== "selected") return;
+    await processFile(phase.file);
+  };
+
   const handleReset = () => {
+    if (isRecording) stopRecording();
+    stopCamera();
+    setCameraOpen(false);
     setPhase({ kind: "idle" });
     if (inputRef.current) inputRef.current.value = "";
   };
@@ -103,13 +180,56 @@ export default function VideoScanPage() {
           <ul style={{ margin: 0, paddingLeft: 18 }}>
             <li><strong>Filmez de près</strong> : 1 à 6 articles max dans le cadre. Le code-barres doit être bien visible.</li>
             <li><strong>Déplacez-vous lentement</strong> : les frames floues sont ignorées automatiquement.</li>
-            <li><strong>Durée recommandée</strong> : 15 à 60 secondes selon le nombre d'articles.</li>
+            <li><strong>Durée recommandée</strong> : 15 à 60 secondes selon le nombre d'articles. Les captures sont limitées à 60 secondes.</li>
             <li>MP4, MOV, AVI, WEBM · Max 200 MB</li>
           </ul>
         </div>
 
+        {(phase.kind === "idle" || phase.kind === "selected") && !cameraOpen && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+            <button type="button" onClick={() => inputRef.current?.click()} style={modeBtnStyle}>
+              <TicketIcon size={19} /> Importer une vidéo
+            </button>
+            <button type="button" onClick={handleOpenCamera} style={modeBtnStyle}>
+              <CameraIcon size={19} /> Filmer maintenant
+            </button>
+          </div>
+        )}
+
+        {cameraOpen && (phase.kind === "idle" || phase.kind === "selected") && (
+          <div style={{ background: "#101418", borderRadius: 16, overflow: "hidden", marginBottom: 16 }}>
+            <div style={{ position: "relative", aspectRatio: "16 / 10", background: "#050607" }}>
+              <video ref={videoRef} muted playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              {isRecording && (
+                <div style={{ position: "absolute", top: 12, left: 12, color: "white", background: "rgba(180,30,30,.88)", borderRadius: 999, padding: "6px 10px", fontSize: 13, fontWeight: 700 }}>
+                  REC {recordingSeconds}s / {MAX_RECORDING_SECONDS}s
+                </div>
+              )}
+            </div>
+            <div style={{ padding: 14, color: "white" }}>
+              {cameraError || permissionState === "denied" ? (
+                <div style={{ color: "#fecaca", fontSize: 13, marginBottom: 10 }}>{cameraError ?? "Autorisez la caméra dans votre navigateur puis réessayez."}</div>
+              ) : (
+                <div style={{ color: "#cbd5e1", fontSize: 13, marginBottom: 10 }}>Filmez lentement les codes-barres à 20–40 cm.</div>
+              )}
+              <div style={{ display: "flex", gap: 10 }}>
+                {!isRecording ? (
+                  <button type="button" onClick={startRecording} disabled={!isRunning} style={recordBtnStyle}>
+                    <CameraIcon size={18} /> Démarrer la capture
+                  </button>
+                ) : (
+                  <button type="button" onClick={stopRecording} style={recordBtnStyle}>
+                    <StopIcon size={18} /> Arrêter et utiliser la vidéo
+                  </button>
+                )}
+                <button type="button" onClick={handleCloseCamera} style={cameraCancelBtnStyle}>Fermer</button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Upload zone */}
-        {(phase.kind === "idle" || phase.kind === "selected") && (
+        {(phase.kind === "idle" || phase.kind === "selected") && !cameraOpen && (
           <div
             onDrop={handleDrop}
             onDragOver={(e) => e.preventDefault()}
@@ -308,4 +428,22 @@ const secondaryBtnStyle: CSSProperties = {
   background: "var(--color-surface)", color: "var(--color-text)",
   border: "1px solid var(--color-border)", borderRadius: 10,
   padding: "12px 16px", fontSize: 14, fontWeight: 600, cursor: "pointer",
+};
+
+const modeBtnStyle: CSSProperties = {
+  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+  background: "var(--color-surface)", color: "var(--color-text)",
+  border: "1px solid var(--color-border)", borderRadius: 12,
+  padding: "13px 10px", fontSize: 13.5, fontWeight: 700, cursor: "pointer",
+};
+
+const recordBtnStyle: CSSProperties = {
+  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+  flex: 1, background: "#dc2626", color: "white", border: "none",
+  borderRadius: 10, padding: "12px 14px", fontSize: 13.5, fontWeight: 700, cursor: "pointer",
+};
+
+const cameraCancelBtnStyle: CSSProperties = {
+  background: "transparent", color: "#e2e8f0", border: "1px solid #475569",
+  borderRadius: 10, padding: "12px 14px", fontSize: 13.5, fontWeight: 600, cursor: "pointer",
 };

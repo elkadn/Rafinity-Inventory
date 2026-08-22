@@ -10,10 +10,8 @@ from openpyxl.styles import Font
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from pymongo.errors import DuplicateKeyError
-
 from app.auth import hash_password, require_admin, get_current_user
-from app.db import get_db
+from app.db import DuplicateKeyError, get_db
 from app.schemas import (
     ActiveInventory,
     DaySummary,

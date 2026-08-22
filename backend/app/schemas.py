@@ -13,7 +13,7 @@ def new_id() -> str:
 
 def today_str(ts: Optional[float] = None) -> str:
     """YYYY-MM-DD, used as a cheap, index-friendly grouping key - much
-    simpler to query in MongoDB than doing date-range aggregation on a raw
+    simpler to query in Oracle than doing date-range aggregation on a raw
     timestamp for every request."""
     import datetime
 
