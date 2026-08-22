@@ -1,4 +1,10 @@
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 
 
 class Settings:
@@ -11,22 +17,21 @@ class Settings:
     # different port than the backend.
     ALLOWED_ORIGINS = os.environ.get(
         "ALLOWED_ORIGINS",
-        "https://localhost:5173,https://192.168.3.75:5173",
     ).split(",")
 
     # ---- Oracle ----
-    ORACLE_USER = os.environ.get("ORACLE_USER", "inventory_user")
-    ORACLE_PASSWORD = os.environ.get("ORACLE_PASSWORD", "elkadn")
-    ORACLE_DSN = os.environ.get("ORACLE_DSN", "localhost:1521/FREEPDB1")
-    ORACLE_POOL_MIN = int(os.environ.get("ORACLE_POOL_MIN", "1"))
-    ORACLE_POOL_MAX = int(os.environ.get("ORACLE_POOL_MAX", "5"))
+    ORACLE_USER = os.environ.get("ORACLE_USER")
+    ORACLE_PASSWORD = os.environ.get("ORACLE_PASSWORD")
+    ORACLE_DSN = os.environ.get("ORACLE_DSN")
+    ORACLE_POOL_MIN = int(os.environ.get("ORACLE_POOL_MIN"))
+    ORACLE_POOL_MAX = int(os.environ.get("ORACLE_POOL_MAX"))
 
     # ---- Auth / JWT ----
     # IMPORTANT: override JWT_SECRET via environment variable in production -
     # this default is only here so the app doesn't crash on first run.
-    JWT_SECRET = os.environ.get("JWT_SECRET", "jesuiadnaneelkiheletjesuislpourrafinityprojet")
+    JWT_SECRET = os.environ.get("JWT_SECRET")
     JWT_ALGORITHM = "HS256"
-    JWT_EXPIRE_MINUTES = int(os.environ.get("JWT_EXPIRE_MINUTES", "480"))
+    JWT_EXPIRE_MINUTES = int(os.environ.get("JWT_EXPIRE_MINUTES"))
 
     # ---- OCR fallback tuning ----
     OCR_ROTATION_RANGE_DEG = 18

@@ -330,19 +330,90 @@ export interface VideoExtractionResponse {
   error: string | null;
 }
 
+export interface VideoJob {
+  id: string;
+  filename: string;
+  status: "queued" | "processing" | "completed" | "failed";
+  progress: string;
+  created_at: number;
+  started_at: number | null;
+  finished_at: number | null;
+  result: VideoExtractionResponse | null;
+  error: string | null;
+}
+
+export async function createVideoJobs(
+  token: string,
+  files: File[],
+  onProgress?: (percent: number) => void,
+): Promise<VideoJob[]> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const form = new FormData();
+    files.forEach((file) => form.append("files", file));
+    xhr.open("POST", `${API_BASE}/video/jobs`);
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress?.(Math.round(event.loaded / event.total * 100));
+    };
+    xhr.onload = () => {
+      let body: VideoJob[] | { detail?: string };
+      try {
+        body = JSON.parse(xhr.responseText);
+      } catch {
+        reject(new Error(`Réponse invalide (${xhr.status})`));
+        return;
+      }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error("detail" in body && body.detail ? body.detail : `${xhr.status}`));
+        return;
+      }
+      resolve(body as VideoJob[]);
+    };
+    xhr.onerror = () => reject(new Error("Échec réseau pendant l'envoi des vidéos."));
+    xhr.onabort = () => reject(new Error("Envoi des vidéos annulé."));
+    xhr.send(form);
+  });
+}
+
+export async function listVideoJobs(token: string): Promise<VideoJob[]> {
+  const res = await fetch(`${API_BASE}/video/jobs`, { headers: authHeaders(token) });
+  return handle<VideoJob[]>(res);
+}
+
 export async function extractFromVideo(
   token: string,
   file: File,
   onProgress?: (phase: string) => void
 ): Promise<VideoExtractionResponse> {
-  onProgress?.("Envoi de la vidéo…");
-  const form = new FormData();
-  form.append("file", file);
-  const res = await fetch(`${API_BASE}/video/extract`, {
-    method: "POST",
-    headers: authHeaders(token),
-    body: form,
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const form = new FormData();
+    form.append("file", file);
+    xhr.open("POST", `${API_BASE}/video/extract`);
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        onProgress?.(`Envoi de la vidéo… ${Math.round(event.loaded / event.total * 100)}%`);
+      }
+    };
+    xhr.upload.onload = () => onProgress?.("Vidéo envoyée, traitement en cours…");
+    xhr.onload = () => {
+      let body: VideoExtractionResponse | { detail?: string };
+      try {
+        body = JSON.parse(xhr.responseText);
+      } catch {
+        reject(new Error(`Réponse invalide (${xhr.status})`));
+        return;
+      }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error("detail" in body && body.detail ? body.detail : `${xhr.status}`));
+        return;
+      }
+      resolve(body as VideoExtractionResponse);
+    };
+    xhr.onerror = () => reject(new Error("Échec de l'envoi de la vidéo."));
+    xhr.onabort = () => reject(new Error("Envoi de la vidéo annulé."));
+    xhr.send(form);
   });
-  onProgress?.("Traitement en cours…");
-  return handle<VideoExtractionResponse>(res);
 }

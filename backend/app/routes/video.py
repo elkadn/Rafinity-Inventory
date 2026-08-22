@@ -2,8 +2,8 @@
 Video barcode extraction - v2.
 
 Key improvements over v1:
-- Multi-scale tiling: the image is cut into overlapping patches at several
-  tile sizes (300/500/800px). Each patch is upscaled 2x before decoding.
+- Tiled decoding: the image is cut into overlapping 500px patches. Each
+    patch is upscaled 2x before decoding.
   This handles the case where barcodes are small relative to the frame size,
   which is the most common cause of missed detections.
 - Both gray and CLAHE variants tried on every patch.
@@ -23,6 +23,8 @@ shelf from across the room. The UI shows this guidance.
 from __future__ import annotations
 
 import logging
+import asyncio
+import json
 import os
 import tempfile
 import time
@@ -33,7 +35,7 @@ from typing import List, Optional, Set
 import cv2
 import numpy as np
 import zxingcpp
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel
 from app.auth import get_current_user
 from app.db import DuplicateKeyError, get_db
@@ -45,9 +47,11 @@ router = APIRouter(tags=["video"])
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 VIDEO_DEBUG_ROOT = os.path.join(PROJECT_ROOT, "video_debug")
+VIDEO_JOB_ROOT = os.path.join(PROJECT_ROOT, "video_jobs")
 
 MAX_VIDEO_SIZE_MB = 200
 MAX_VIDEO_SIZE_BYTES = MAX_VIDEO_SIZE_MB * 1024 * 1024
+MAX_BATCH_VIDEOS = 10
 
 # Process one frame every N seconds of video
 FRAME_INTERVAL_SECONDS = 0.5   # 2 fps - denser than v1 (was 1fps)
@@ -56,8 +60,9 @@ FRAME_INTERVAL_SECONDS = 0.5   # 2 fps - denser than v1 (was 1fps)
 # Blurry frames (motion during filming) are skipped to save time.
 BLUR_THRESHOLD = 40.0
 
-# Tile sizes used for multi-scale scanning (pixels)
-TILE_SIZES = [300, 500, 800]
+# A single overlapping scale gives the best speed/coverage balance. The full
+# frame pass handles large codes; this scale handles small codes after 2x upscaling.
+TILE_SIZES = [500]
 TILE_OVERLAP_RATIO = 0.35   # 35% overlap between adjacent tiles
 
 
@@ -91,6 +96,18 @@ class VideoExtractionResponse(BaseModel):
     debug_frames: Optional[List[VideoFrameDebug]] = None
 
 
+class VideoJobResponse(BaseModel):
+    id: str
+    filename: str
+    status: str
+    progress: str
+    created_at: float
+    started_at: Optional[float] = None
+    finished_at: Optional[float] = None
+    result: Optional[VideoExtractionResponse] = None
+    error: Optional[str] = None
+
+
 def _blur_score(gray: np.ndarray) -> float:
     """Return the Laplacian variance to quantify frame sharpness."""
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())
@@ -103,6 +120,156 @@ def _is_sharp(gray: np.ndarray) -> bool:
 
 def _ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
+
+
+def _job_path(job_id: str) -> str:
+    return os.path.join(VIDEO_JOB_ROOT, f"{job_id}.json")
+
+
+def _write_job(job: dict) -> None:
+    _ensure_dir(VIDEO_JOB_ROOT)
+    temporary_path = f"{_job_path(job['id'])}.tmp"
+    with open(temporary_path, "w", encoding="utf-8") as handle:
+        json.dump(job, handle)
+    os.replace(temporary_path, _job_path(job["id"]))
+
+
+def _read_job(job_id: str) -> dict | None:
+    try:
+        with open(_job_path(job_id), encoding="utf-8") as handle:
+            return json.load(handle)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def _public_job(job: dict) -> VideoJobResponse:
+    return VideoJobResponse(**job)
+
+
+async def _run_video_job(job: dict, video_path: str, user: UserPublic) -> None:
+    started_processing = time.time()
+    job["status"] = "processing"
+    job["started_at"] = time.time()
+    job["progress"] = "Analyse de la vidéo…"
+    _write_job(job)
+    try:
+        code_counter, frames_processed, frames_skipped, duration, debug_frames = await asyncio.to_thread(
+            _process_video, video_path
+        )
+        db = get_db()
+        results: List[VideoCodeResult] = []
+        total_added = 0
+        total_duplicates = 0
+        for code, hits in code_counter.most_common():
+            record = ScanRecord(
+                user_id=user.id,
+                username=user.username,
+                code=code,
+                method="barcode",
+                confidence=None,
+                inventory_date=job["inventory_date"],
+            )
+            document = record.model_dump()
+            document["_id"] = document.pop("id")
+            try:
+                await db.scans.insert_one(document)
+                added = True
+                total_added += 1
+            except DuplicateKeyError:
+                added = False
+                total_duplicates += 1
+            results.append(VideoCodeResult(code=code, frame_hits=hits, added=added, reason=None if added else "duplicate"))
+
+        job["status"] = "completed"
+        job["progress"] = "Analyse terminée"
+        job["finished_at"] = time.time()
+        job["result"] = VideoExtractionResponse(
+            total_frames_processed=frames_processed,
+            total_frames_skipped_blur=frames_skipped,
+            duration_seconds=round(duration, 1),
+            codes_found=results,
+            total_added=total_added,
+            total_duplicates=total_duplicates,
+            processing_time_ms=int((time.time() - started_processing) * 1000),
+            inventory_date=job["inventory_date"],
+            debug_frames=debug_frames,
+        ).model_dump()
+    except Exception as error:
+        logger.exception("Video job %s failed", job["id"])
+        job["status"] = "failed"
+        job["progress"] = "Analyse interrompue"
+        job["finished_at"] = time.time()
+        job["error"] = str(error)
+    finally:
+        _write_job(job)
+        try:
+            os.unlink(video_path)
+        except OSError:
+            pass
+
+
+@router.post("/video/jobs", response_model=list[VideoJobResponse], status_code=status.HTTP_202_ACCEPTED)
+async def create_video_jobs(
+    files: List[UploadFile] = File(...),
+    user: UserPublic = Depends(get_current_user),
+) -> list[VideoJobResponse]:
+    if not files or len(files) > MAX_BATCH_VIDEOS:
+        raise HTTPException(status_code=400, detail=f"Sélectionnez entre 1 et {MAX_BATCH_VIDEOS} vidéos.")
+    inventory = await _get_active_inventory()
+    inventory_date = inventory.inventory_date if inventory else _today()
+    jobs: list[VideoJobResponse] = []
+    for upload in files:
+        filename = (upload.filename or "").lower()
+        ext = os.path.splitext(filename)[1]
+        if ext not in {".mp4", ".mov", ".avi", ".webm", ".mkv", ".m4v"}:
+            raise HTTPException(status_code=400, detail=f"Format non supporté: {ext}")
+        content = await upload.read()
+        if len(content) > MAX_VIDEO_SIZE_BYTES:
+            raise HTTPException(status_code=413, detail=f"Fichier trop volumineux: {upload.filename}")
+        job_id = uuid.uuid4().hex
+        video_path = os.path.join(VIDEO_JOB_ROOT, f"{job_id}{ext}")
+        _ensure_dir(VIDEO_JOB_ROOT)
+        with open(video_path, "wb") as handle:
+            handle.write(content)
+        job = {
+            "id": job_id,
+            "user_id": user.id,
+            "filename": upload.filename or f"video{ext}",
+            "status": "queued",
+            "progress": "En attente…",
+            "created_at": time.time(),
+            "started_at": None,
+            "finished_at": None,
+            "result": None,
+            "error": None,
+            "inventory_date": inventory_date,
+        }
+        _write_job(job)
+        asyncio.create_task(_run_video_job(job, video_path, user))
+        jobs.append(_public_job(job))
+    return jobs
+
+
+@router.get("/video/jobs", response_model=list[VideoJobResponse])
+async def list_video_jobs(user: UserPublic = Depends(get_current_user)) -> list[VideoJobResponse]:
+    _ensure_dir(VIDEO_JOB_ROOT)
+    jobs = []
+    for filename in os.listdir(VIDEO_JOB_ROOT):
+        if not filename.endswith(".json"):
+            continue
+        job = _read_job(filename[:-5])
+        if job and job.get("user_id") == user.id:
+            jobs.append(_public_job(job))
+    jobs.sort(key=lambda job: job.created_at, reverse=True)
+    return jobs[:50]
+
+
+@router.get("/video/jobs/{job_id}", response_model=VideoJobResponse)
+async def get_video_job(job_id: str, user: UserPublic = Depends(get_current_user)) -> VideoJobResponse:
+    job = _read_job(job_id)
+    if not job or job.get("user_id") != user.id:
+        raise HTTPException(status_code=404, detail="Traitement vidéo introuvable.")
+    return _public_job(job)
 
 
 def _decode_image(img: np.ndarray) -> Set[str]:
@@ -125,10 +292,8 @@ def _decode_frame(gray: np.ndarray) -> Set[str]:
     - Cutting the frame into 300-500px tiles and upscaling 2x makes each
       barcode ~160-320px wide in the tile - comfortably above the threshold.
 
-    Why multiple tile sizes:
-    - Small tiles (300px) help with small/dense barcodes.
-    - Large tiles (800px) help with large/spread-out barcodes.
-    - Full image pass catches codes that happen to be near patch boundaries.
+    The 500px overlapping scale is a compromise between small-code coverage
+    and processing time. The full-image pass still catches large codes.
     """
     code_occurrences: dict[str, list[dict]] = {}
     h, w = gray.shape
@@ -187,8 +352,11 @@ def _decode_frame(gray: np.ndarray) -> Set[str]:
                 up_codes = _decode_image(up)
                 record_codes(up_codes, "tile", int(x), int(y), int(pw), int(ph), f"tile_{tile_size}_orig")
 
-                clahe_codes = _decode_image(clahe)
-                record_codes(clahe_codes, "tile", int(x), int(y), int(pw), int(ph), f"tile_{tile_size}_clahe")
+                # CLAHE is a fallback for difficult patches. Avoid paying for
+                # a second ZXing pass when the original patch already decoded.
+                if not up_codes:
+                    clahe_codes = _decode_image(clahe)
+                    record_codes(clahe_codes, "tile", int(x), int(y), int(pw), int(ph), f"tile_{tile_size}_clahe")
 
                 x += step
             y += step
@@ -212,7 +380,8 @@ def _process_video(video_path: str, debug: bool = False, debug_dir: Optional[str
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    duration = total_frames / fps if fps > 0 else 0
+    frame_count_known = total_frames > 0
+    duration = total_frames / fps if frame_count_known and fps > 0 else 0
 
     frame_step = max(1, int(fps * FRAME_INTERVAL_SECONDS))
     code_counter: Counter = Counter()
@@ -224,9 +393,17 @@ def _process_video(video_path: str, debug: bool = False, debug_dir: Optional[str
     if debug and debug_dir is not None:
         _ensure_dir(debug_dir)
 
-    while current_pos < total_frames:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, current_pos)
-        ret, frame = cap.read()
+    while (frame_count_known and current_pos < total_frames) or not frame_count_known:
+        # Grab intermediate frames without decoding them. This keeps the
+        # reliable sequential read needed by WebM while preserving the
+        # intended two decoded frames per second.
+        ret = cap.grab()
+        if not ret:
+            break
+        if current_pos % frame_step != 0:
+            current_pos += 1
+            continue
+        ret, frame = cap.retrieve()
         if not ret:
             break
 
@@ -272,6 +449,8 @@ def _process_video(video_path: str, debug: bool = False, debug_dir: Optional[str
         current_pos += frame_step
 
     cap.release()
+    if not frame_count_known and fps > 0:
+        duration = current_pos / fps
     return code_counter, frames_processed, frames_skipped_blur, duration, debug_frames
 
 

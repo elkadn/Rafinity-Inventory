@@ -157,8 +157,7 @@ export default function ScannerPage() {
 
             {activeInventory && (
               <div style={inventoryBadgeStyle}>
-                📋 Inventaire actif : {activeInventory.label}{" "}
-                {activeInventory.inventory_date}
+                📋 Inventaire actif : {activeInventory.inventory_date}
               </div>
             )}
 
