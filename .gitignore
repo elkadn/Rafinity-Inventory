@@ -31,6 +31,7 @@ Thumbs.db
 
 # Certificates
 caddy/certs/
+frontend/certs/
 
 # Build
 coverage/

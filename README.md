@@ -20,11 +20,12 @@ ticket_scanner/
 
 ## Installation - développement local
 
-### 1. Oracle externe de l'entreprise
+### 1. Oracle dans Docker
 
-La base Oracle n'est pas lancée par Docker. Exécutez manuellement
-`backend/sql/oracle_schema.sql` avec le compte applicatif Oracle fourni par
-l'entreprise. Le script utilise une syntaxe compatible Oracle 12c.
+En déploiement Docker, Oracle XE est lancé dans le service `oracle`. Les deux
+scripts `backend/sql/oracle_schema.sql` puis
+`backend/sql/create_initial_users.sql` sont exécutés automatiquement lors de
+la première création du volume `oracle-data`.
 
 ### 2. Backend
 
@@ -58,6 +59,89 @@ Lancer :
 ```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+## Déploiement Docker Hub sur le poste Windows 10
+
+La méthode recommandée pour le test en entreprise est Docker Desktop avec
+trois services : Oracle XE, le backend FastAPI et le frontend Nginx.
+
+### Première installation sur votre machine de développement
+
+À la racine du projet :
+
+```bash
+cp .env.example .env
+# Modifiez .env : les mots de passe Oracle et JWT_SECRET
+mkdir -p frontend/certs
+mkcert -install
+mkcert -cert-file frontend/certs/server.pem -key-file frontend/certs/server-key.pem localhost 127.0.0.1
+docker compose config
+docker compose build
+docker compose up -d
+```
+
+Le premier démarrage Oracle peut prendre plusieurs minutes. Le premier build
+du backend peut aussi être long car il installe OpenCV, EasyOCR et Tesseract.
+Testez ensuite l'application sur `https://localhost:8080`.
+La caméra du navigateur fonctionne sur `localhost`. Pour les tests depuis un
+téléphone avec une autre adresse, utilisez HTTPS (voir la section HTTPS).
+
+### Publier les images sur Docker Hub
+
+Créez un dépôt Docker Hub pour `ticket-scanner-backend` et un autre pour
+`ticket-scanner-frontend`, puis connectez-vous :
+
+```bash
+docker login
+docker compose build
+docker compose push
+```
+
+Le nom d'utilisateur doit être renseigné dans `.env` via
+`DOCKERHUB_USERNAME`. Pour publier une version identifiée, utilisez par
+exemple `IMAGE_TAG=1.0.0 docker compose build && IMAGE_TAG=1.0.0 docker compose push`.
+
+### Installer sur le poste Windows 10
+
+1. Installez Docker Desktop pour Windows et activez WSL 2 si Docker le demande.
+2. Copiez `docker-compose.yml`, `.env.example`, le dossier `frontend/certs/`
+  et les scripts SQL dans le dossier du poste, puis créez `.env` à partir du
+  modèle. Les deux fichiers de certificat sont nécessaires au démarrage.
+3. Dans `.env`, renseignez `DOCKERHUB_USERNAME`, `IMAGE_TAG`, les mots de
+  passe Oracle, `JWT_SECRET` et `APP_PORT=8080`.
+4. Ouvrez PowerShell dans le dossier et exécutez :
+
+```powershell
+docker login
+docker compose pull
+docker compose up -d
+docker compose ps
+```
+
+Ouvrez ensuite `https://localhost:8080`. Pour arrêter l'application :
+`docker compose down`. Les données restent dans le volume Docker Oracle.
+Ne faites `docker compose down -v` que si vous voulez supprimer les données
+et rejouer les deux scripts SQL.
+
+### Publier une modification
+
+Après chaque modification validée :
+
+```bash
+docker compose build
+docker compose push
+```
+
+Sur le poste Windows :
+
+```powershell
+docker compose pull
+docker compose up -d
+```
+
+Pour éviter qu'un poste conserve une ancienne image, utilisez un nouveau tag
+à chaque livraison (`IMAGE_TAG=1.0.1`), puis mettez le même tag dans son `.env`.
+Ne publiez jamais `.env` sur Git ou Docker Hub.
 
 ### 3. Créer les premiers comptes (obligatoire avant toute connexion)
 
@@ -98,16 +182,17 @@ réseau de l'entreprise, il faut HTTPS - voir la section suivante.
 
 Puisqu'il n'y a pas de nom de domaine, pas de certificat automatique
 (Let's Encrypt) possible. On utilise **mkcert** pour générer un certificat
-de confiance localement, porté par **Caddy**, qui sert à la fois le
-frontend et fait office de proxy vers le backend - une seule origine HTTPS,
-pas de souci CORS.
+de confiance localement, porté directement par **Nginx** dans le conteneur
+frontend. Nginx sert le frontend et fait proxy vers le backend - une seule
+origine HTTPS, pas de souci CORS.
 
 ### Étape 1 - Générer le certificat
 
 Sur le serveur (ou une machine qui peut copier les fichiers dessus) :
 ```bash
 mkcert -install
-mkcert -cert-file caddy/certs/server.pem -key-file caddy/certs/server-key.pem \
+mkdir -p frontend/certs
+mkcert -cert-file frontend/certs/server.pem -key-file frontend/certs/server-key.pem \
     localhost 127.0.0.1 <IP_LAN_DU_SERVEUR>
 ```
 Remplacez `<IP_LAN_DU_SERVEUR>` par l'IP réelle (ex: `192.168.1.10`).
@@ -124,7 +209,7 @@ fastidieux pour ~10 appareils, mais à faire une seule fois par appareil.
 
 ```bash
 cd frontend
-echo "VITE_API_BASE_URL=" > .env.production   # vide = chemins relatifs, via Caddy
+echo "VITE_API_BASE_URL=" > .env.production   # vide = chemins relatifs, via Nginx
 npm run build
 ```
 
@@ -135,13 +220,15 @@ npm run build
 JWT_SECRET=une-longue-phrase-secrete-unique-a-changer
 ```
 
-Puis :
+Puis, à la racine du projet :
 ```bash
+export APP_PORT=443
+export HTTP_PORT=80
 docker compose up -d --build
 ```
 
-Cela démarre uniquement le backend et Caddy en HTTPS sur le port 443
-(et redirection automatique depuis le port 80). Oracle reste hébergé
+Cela démarre le backend et le frontend Nginx en HTTPS sur le port 443
+(avec redirection automatique depuis le port 80). Oracle reste hébergé
 séparément sur le serveur de base de données de l'entreprise.
 
 ### Étape 4 - Créer les comptes en production

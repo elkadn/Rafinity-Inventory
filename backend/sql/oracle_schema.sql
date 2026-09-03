@@ -1,5 +1,5 @@
 -- Oracle 12c-compatible schema for the inventory scanner.
--- Run manually as the application schema user supplied by the company.
+-- Executed by the Docker Oracle initialization script as the application user.
 create table app_users (
   id varchar2(32) primary key,
   username varchar2(100) not null unique,
@@ -14,7 +14,7 @@ create table app_users (
   constraint ck_app_users_statut check (statut in ('actif','inactif'))
 );
 
-SELECT statut FROM app_users where username = 'admin';
+
 
 create table app_scans (
   id varchar2(32) primary key,
@@ -30,9 +30,6 @@ create table app_scans (
   constraint uq_app_scans_business unique (user_id, code, inventory_date)
 );
 
-
-select code from app_scans where user_id = '3f707b2b415c4faa836f79f2c5101fc7';
-and inventory_date = '2023-06-01';
 
 create table app_config (
   id varchar2(100) primary key,

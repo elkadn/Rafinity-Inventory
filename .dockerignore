@@ -1,0 +1,14 @@
+.git
+.github
+backend/.env
+backend/venv
+backend/__pycache__
+backend/.pytest_cache
+backend/tests
+backend/video_debug
+backend/video_jobs
+frontend/node_modules
+frontend/dist
+frontend/.env
+frontend/.vite
+*.log

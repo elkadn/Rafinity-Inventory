@@ -1,0 +1,48 @@
+services:
+  oracle:
+    image: gvenzl/oracle-xe:21-slim
+    restart: unless-stopped
+    environment:
+      ORACLE_PASSWORD: ${ORACLE_SYS_PASSWORD:-CHANGE_ME_sys_password}
+      APP_USER: ${ORACLE_USER:-inventory_user}
+      APP_USER_PASSWORD: ${ORACLE_PASSWORD:-CHANGE_ME_app_password}
+    volumes:
+      - oracle-data:/opt/oracle/oradata
+      - ./backend/sql/oracle_schema.sql:/opt/app-init/oracle_schema.sql:ro
+      - ./backend/sql/create_initial_users.sql:/opt/app-init/create_initial_users.sql:ro
+      - ./backend/sql/run-init.sh:/container-entrypoint-initdb.d/01-run-init.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  backend:
+    build:
+      context: ./backend
+    image: ${DOCKERHUB_USERNAME:-your-dockerhub-user}/ticket-scanner-backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - ${ENV_FILE:-.env}
+    depends_on:
+      oracle:
+        condition: service_healthy
+    expose:
+      - "8000"
+
+  frontend:
+    build:
+      context: ./frontend
+    image: ${DOCKERHUB_USERNAME:-your-dockerhub-user}/ticket-scanner-frontend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${APP_PORT:-8080}:443"
+      - "${HTTP_PORT:-8081}:80"
+    volumes:
+      - ./frontend/certs:/etc/nginx/certs:ro
+
+volumes:
+  oracle-data:
