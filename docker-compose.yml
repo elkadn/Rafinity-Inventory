@@ -4,12 +4,13 @@ services:
     restart: unless-stopped
     environment:
       ORACLE_PASSWORD: ${ORACLE_SYS_PASSWORD:-CHANGE_ME_sys_password}
-      APP_USER: ${ORACLE_USER:-inventory_user}
-      APP_USER_PASSWORD: ${ORACLE_PASSWORD:-CHANGE_ME_app_password}
+      APP_USER: ${APP_USER:-inventory_user}
+      APP_USER_PASSWORD: ${APP_PASSWORD:-CHANGE_ME_app_password}
     volumes:
       - oracle-data:/opt/oracle/oradata
       - ./backend/sql/oracle_schema.sql:/opt/app-init/oracle_schema.sql:ro
       - ./backend/sql/create_initial_users.sql:/opt/app-init/create_initial_users.sql:ro
+      - ./backend/sql/create_app_user.sql:/opt/app-init/create_app_user.sql:ro
       - ./backend/sql/run-init.sh:/container-entrypoint-initdb.d/01-run-init.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "healthcheck.sh"]
