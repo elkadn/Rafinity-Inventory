@@ -170,7 +170,12 @@ export default function ScannerPage() {
 
             <div
               className="scan-action-row"
-              style={{ display: "flex", gap: 10, width: "100%" }}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 10,
+                width: "100%",
+              }}
             >
               <button
                 className="scan-start-btn"

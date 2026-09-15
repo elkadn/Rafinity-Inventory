@@ -280,3 +280,23 @@ https://<IP_LAN_DU_SERVEUR>
 Voir `frontend/src/hooks/useBarcodeScanner.ts` (cadence de détection, délais
 avant "rapprochez-vous"/OCR de secours) et `backend/app/config.py`
 (tolérance de rotation OCR).
+
+
+
+docker run -d \
+  --name oracle-xe \
+  -p 1521:1521 \
+  -e ORACLE_PASSWORD=elkadn \
+  -e APP_USER=inventory_user \
+  -e APP_USER_PASSWORD=elkadn \
+  gvenzl/oracle-xe:21-slim
+
+  docker exec -it oracle-xe sqlplus sys/elkadn@XEPDB1 as sysdba
+
+CREATE USER inventory_user IDENTIFIED BY elkadn;
+GRANT CREATE SESSION TO inventory_user;
+GRANT CONNECT, RESOURCE TO inventory_user;
+GRANT UNLIMITED TABLESPACE TO inventory_user;
+
+  docker logs -f oracle-xe
+
