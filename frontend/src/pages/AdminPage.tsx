@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { ChangeEvent, CSSProperties, ReactNode } from "react";
 import { useAuth } from "../context/AuthContext";
 import {
   adminListDays,
   adminUserDayScans,
+  adminDeleteUserScan,
   adminMergedDay,
   adminDownloadDayCsv,
   adminListUsers,
@@ -15,10 +16,20 @@ import {
   fetchActiveInventory,
   type DaySummaryDto,
   type UserDayScansDto,
+  type ScanDto,
   type MergedDayDto,
   type AuthUserDto,
   type ActiveInventoryDto,
   type DeletionDto,
+  type BulkPhotoJobDto,
+  type AdminVideoJobDto,
+  type AdminVideoHistoryDto,
+  adminCreatePhotoJob,
+  adminListPhotoJobs,
+  adminListPhotoHistory,
+  adminCreateVideoJobs,
+  adminListVideoJobs,
+  adminListVideoHistory,
 } from "../lib/api";
 import { DownloadIcon } from "../components/icons";
 
@@ -28,13 +39,17 @@ type View =
   | { kind: "user"; date: string; userId: string }
   | { kind: "merged"; date: string }
   | { kind: "users" }
+  | { kind: "photos" }
+  | { kind: "videos" }
   | { kind: "inventory" }
   | { kind: "deletions" };
 
-type NavKey = "days" | "inventory" | "deletions" | "users";
+type NavKey = "days" | "photos" | "videos" | "inventory" | "deletions" | "users";
 
 const NAV_ITEMS: { key: NavKey; label: string; icon: ReactNode }[] = [
   { key: "days", label: "Scans", icon: <ScanIcon /> },
+  { key: "photos", label: "Photos", icon: <FolderIcon /> },
+  { key: "videos", label: "Vidéos", icon: <VideoIcon /> },
   { key: "inventory", label: "Inventaire", icon: <InventoryIcon /> },
   { key: "deletions", label: "Suppressions", icon: <TrashIcon /> },
   { key: "users", label: "Utilisateurs", icon: <UsersIcon /> },
@@ -60,11 +75,17 @@ export default function AdminPage() {
   const [activeInventory, setActiveInventory] =
     useState<ActiveInventoryDto | null>(null);
 
-  useEffect(() => {
+  const loadDays = () => {
     if (!token) return;
+    setLoading(true);
     adminListDays(token)
       .then(setDays)
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    if (!token) return;
+    loadDays();
     fetchActiveInventory(token)
       .then(setActiveInventory)
       .catch(() => {});
@@ -73,7 +94,10 @@ export default function AdminPage() {
   const activeNav = navKeyForView(view);
 
   const goTo = (key: NavKey) => {
-    if (key === "days") setView({ kind: "days" });
+    if (key === "days") {
+      setView({ kind: "days" });
+      loadDays();
+    }
     else setView({ kind: key } as View);
   };
 
@@ -88,6 +112,10 @@ export default function AdminPage() {
         .admin-primary-btn:hover { filter: brightness(0.96); }
         .admin-ghost-btn:hover { background: rgba(189, 177, 132, 0.10) !important; }
         .admin-logout-btn:hover { background: rgba(192, 86, 79, 0.12) !important; border-color: rgba(192, 86, 79, 0.35) !important; }
+        @keyframes admin-progress-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+        @keyframes admin-processing-dot { 0%, 60%, 100% { opacity: .25; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
+        @keyframes admin-toast-in { from { opacity: 0; transform: translate(-50%, -12px); } to { opacity: 1; transform: translate(-50%, 0); } }
+        .admin-users-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
         .admin-input:focus, .admin-select:focus {
           border-color: #bdb184 !important;
           box-shadow: 0 0 0 3px rgba(189, 177, 132, 0.16) !important;
@@ -97,6 +125,7 @@ export default function AdminPage() {
           .admin-mobile-nav { display: flex !important; }
           .admin-main { margin-left: 0 !important; }
           .admin-content { padding: 16px !important; }
+          .admin-users-grid { grid-template-columns: 1fr; }
         }
       `}</style>
 
@@ -127,7 +156,7 @@ export default function AdminPage() {
                 color: "#2b2a22",
               }}
             >
-              Administration
+              Gestion d'inventaire
             </div>
           </div>
         </div>
@@ -330,6 +359,8 @@ export default function AdminPage() {
               onChanged={(inv) => setActiveInventory(inv)}
             />
           )}
+          {view.kind === "photos" && <PhotoImportView />}
+                    {view.kind === "videos" && <AdminVideoImportView />}
           {view.kind === "deletions" && <DeletionsView />}
           {view.kind === "users" && <UserManagementView />}
         </main>
@@ -545,6 +576,8 @@ function UserScansView({
   const { token } = useAuth();
   const [data, setData] = useState<UserDayScansDto | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<ScanDto | null>(null);
+  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -556,6 +589,19 @@ function UserScansView({
   const filteredScans = data.scans.filter((scan) =>
     scan.code.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  const deleteSelectedScan = async () => {
+    if (!token || !deleteTarget) return;
+    try {
+      await adminDeleteUserScan(token, date, userId, deleteTarget.id);
+      setData((current) => current ? { ...current, scans: current.scans.filter((scan) => scan.id !== deleteTarget.id) } : current);
+      setToast({ type: "success", message: `Le code ${deleteTarget.code} a été supprimé pour ${data.user.username}.` });
+    } catch (error) {
+      setToast({ type: "error", message: error instanceof Error ? error.message : "Impossible de supprimer ce code." });
+    } finally {
+      setDeleteTarget(null);
+    }
+  };
 
   return (
     <div>
@@ -636,9 +682,20 @@ function UserScansView({
           code: s.code,
           meta: s.method,
           scan_date: s.scan_date,
+          action: <button type="button" onClick={() => setDeleteTarget(s)} style={adminDeleteButtonStyle}>Supprimer</button>,
         }))}
         metaLabel="Méthode"
       />
+      {toast && <AdminToast toast={toast} onClose={() => setToast(null)} />}
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Supprimer ce code ?"
+          message={`Le code ${deleteTarget.code} sera enregistré comme supprimé par ${data.user.username}.`}
+          confirmLabel="Supprimer"
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={deleteSelectedScan}
+        />
+      )}
     </div>
   );
 }
@@ -824,6 +881,7 @@ function CodeTable({
     meta: string;
     warn?: boolean;
     scan_date?: string; // scan_date devient optionnel
+    action?: ReactNode;
   }[];
   metaLabel: string;
   showScanDate?: boolean; // Nouveau paramètre
@@ -878,6 +936,7 @@ function CodeTable({
                 {r.scan_date}
               </div>
             )}
+            {r.action && <div style={{ width: 90, textAlign: "right" }}>{r.action}</div>}
           </div>
         ))}
       </div>
@@ -896,6 +955,7 @@ function InventoryView({
   const [date, setDate] = useState(activeInventory?.inventory_date ?? "");
   const [label, setLabel] = useState(activeInventory?.label ?? "");
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   useEffect(() => {
     if (!toast) return;
@@ -922,12 +982,7 @@ function InventoryView({
 
   const handleClear = async () => {
     if (!token) return;
-    if (
-      !window.confirm(
-        "Supprimer l'inventaire actif ? Les scanners reviendront à la date du jour.",
-      )
-    )
-      return;
+    setConfirmClear(false);
     try {
       await adminClearInventory(token);
       onChanged(null);
@@ -982,7 +1037,7 @@ function InventoryView({
                 le {new Date(activeInventory.set_at * 1000).toLocaleString()}
               </div>
             </div>
-            <DangerButton onClick={handleClear}>Désactiver</DangerButton>
+            <DangerButton onClick={() => setConfirmClear(true)}>Désactiver</DangerButton>
           </div>
         </div>
       ) : (
@@ -1036,29 +1091,646 @@ function InventoryView({
       </p>
 
       {toast && (
-        <div
-          style={{
-            position: "fixed",
-            top: 18,
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 2000,
-            padding: "12px 16px",
-            borderRadius: 12,
-            background: toast.type === "success" ? "#2f7d32" : "#b23a3a",
-            color: "#fff",
-            boxShadow: "0 12px 28px rgba(22, 20, 18, 0.22)",
-            fontWeight: 700,
-            fontSize: 13.5,
-            maxWidth: "min(90vw, 420px)",
-            wordBreak: "break-word",
-          }}
-        >
-          {toast.message}
-        </div>
+        <AdminToast toast={toast} onClose={() => setToast(null)} />
+      )}
+      {confirmClear && (
+        <ConfirmDialog
+          title="Désactiver l’inventaire actif ?"
+          message="Les prochains scans utiliseront automatiquement la date du jour."
+          confirmLabel="Désactiver"
+          onCancel={() => setConfirmClear(false)}
+          onConfirm={handleClear}
+        />
       )}
     </div>
   );
+}
+
+// --------------------------------------------------------------------- //
+function PhotoImportView() {
+  const { token } = useAuth();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [jobs, setJobs] = useState<BulkPhotoJobDto[]>([]);
+  const [history, setHistory] = useState<BulkPhotoJobDto[]>([]);
+  const [historyDate, setHistoryDate] = useState("");
+  const [expandedJobIds, setExpandedJobIds] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(false);
+  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [confirmUpload, setConfirmUpload] = useState(false);
+  const knownJobStatuses = useRef<Map<string, BulkPhotoJobDto["status"]> | null>(null);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timeout = window.setTimeout(() => setToast(null), 3000);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
+
+  const selectedSize = files.reduce((total, file) => total + file.size, 0);
+  const displayJobs = [...jobs, ...history].sort(
+    (a, b) => (b.created_at ?? 0) - (a.created_at ?? 0),
+  );
+  const selectedFolderCounts = Array.from(
+    files.reduce((folders, file) => {
+      const path = file.webkitRelativePath || file.name;
+      const parts = path.split("/").filter(Boolean);
+      const folderName = parts.length >= 3 ? parts[parts.length - 2] : "Dossier utilisateur";
+      folders.set(folderName, (folders.get(folderName) ?? 0) + 1);
+      return folders;
+    }, new Map<string, number>()),
+  );
+  const selectedParentFolder = files[0]
+    ? (files[0].webkitRelativePath || files[0].name)
+        .split("/")
+        .filter(Boolean)[0]
+    : "";
+  const formatSize = (bytes: number) => {
+    if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} Ko`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
+  };
+
+  const handleFolderSelection = (event: ChangeEvent<HTMLInputElement>) => {
+    setFiles(Array.from(event.target.files ?? []));
+  };
+
+  const openParentFolder = async () => {
+    const directoryPicker = (
+      window as Window & {
+        showDirectoryPicker?: () => Promise<unknown>;
+      }
+    ).showDirectoryPicker;
+
+    if (!directoryPicker || !window.isSecureContext) {
+      inputRef.current?.click();
+      return;
+    }
+
+    try {
+      const directory: any = await directoryPicker();
+      const selectedFiles: File[] = [];
+
+      const collectFiles = async (handle: any, path: string): Promise<void> => {
+        for await (const entry of handle.values()) {
+          const entryPath = `${path}/${entry.name}`;
+          if (entry.kind === "directory") {
+            await collectFiles(entry, entryPath);
+            continue;
+          }
+          if (entry.kind !== "file") continue;
+
+          const file = await entry.getFile();
+          if (!file.type.startsWith("image/")) continue;
+          Object.defineProperty(file, "webkitRelativePath", {
+            configurable: true,
+            value: entryPath,
+          });
+          selectedFiles.push(file);
+        }
+      };
+
+      await collectFiles(directory, directory.name);
+      setFiles(selectedFiles);
+      if (selectedFiles.length === 0) {
+        setToast({ type: "error", message: "Aucune image trouvée dans ce dossier." });
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setToast({ type: "error", message: "Impossible de lire le dossier sélectionné." });
+    }
+  };
+
+  const loadJobs = async () => {
+    if (!token) return;
+    try {
+      const activeJobs = await adminListPhotoJobs(token);
+      let completedJobs: BulkPhotoJobDto[] = [];
+      try {
+        completedJobs = await adminListPhotoHistory(token, historyDate || undefined);
+      } catch (error) {
+        setToast({
+          type: "error",
+          message: error instanceof Error ? `Historique photo: ${error.message}` : "Impossible de charger l'historique photo.",
+        });
+      }
+      const allJobs = [...activeJobs, ...completedJobs];
+      const previousStatuses = knownJobStatuses.current;
+      if (previousStatuses) {
+        const completedJob = allJobs.find(
+          (job) => job.status === "completed" && previousStatuses.get(job.id) !== "completed",
+        );
+        if (completedJob) {
+          setToast({ type: "success", message: `Le traitement photo de ${completedJob.total_photos} image(s) est terminé.` });
+        }
+      }
+      knownJobStatuses.current = new Map(allJobs.map((job) => [job.id, job.status]));
+      setJobs(activeJobs);
+      setHistory(completedJobs);
+    } catch (error) {
+      setToast({
+        type: "error",
+        message: error instanceof Error ? `Traitements photo: ${error.message}` : "Impossible de charger les traitements photo.",
+      });
+    }
+  };
+
+  useEffect(() => {
+    void loadJobs();
+    const timer = window.setInterval(() => void loadJobs(), 5000);
+    return () => window.clearInterval(timer);
+  }, [token, historyDate]);
+
+  const launch = async () => {
+    if (!token || files.length === 0) return;
+    setConfirmUpload(false);
+    setLoading(true);
+    setToast(null);
+    try {
+      const job = await adminCreatePhotoJob(token, files);
+      setJobs((current) => [job, ...current]);
+      setFiles([]);
+      setToast({ type: "success", message: "Le traitement a été lancé en arrière-plan." });
+    } catch (error) {
+      setToast({ type: "error", message: error instanceof Error ? error.message : "Échec du lancement." });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggleJob = (jobId: string) => {
+    setExpandedJobIds((current) => {
+      const next = new Set(current);
+      if (next.has(jobId)) next.delete(jobId);
+      else next.add(jobId);
+      return next;
+    });
+  };
+
+  return (
+    <div>
+      <PageHeader
+        title="Import de photos"
+        subtitle="Sélectionnez un dossier parent contenant un sous-dossier par utilisateur"
+      />
+      <div style={panelStyle}>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          {...({ webkitdirectory: "", directory: "" } as object)}
+          style={{ display: "none" }}
+          onChange={handleFolderSelection}
+        />
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <PrimaryButton onClick={() => void openParentFolder()}>
+            <FolderIcon size={17} /> Choisir le dossier parent
+          </PrimaryButton>
+          <span style={{ color: "#6f6a58", fontSize: 13 }}>
+              {files.length
+                ? `Dossier prêt à être envoyé · ${selectedParentFolder}`
+                : "Aucun dossier sélectionné"}
+          </span>
+        </div>
+        {files.length > 0 && (
+          <div style={photoSelectionStyle}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <strong style={{ color: "#2b2a22" }}>Contenu sélectionné</strong>
+              <span style={{ color: "#6f6a58", fontSize: 13 }}>{formatSize(selectedSize)}</span>
+            </div>
+            <div style={{ color: "#6f6a58", fontSize: 13, marginTop: 8 }}>
+              {selectedFolderCounts.length} sous-dossier{selectedFolderCounts.length > 1 ? "s" : ""} · {files.length} image{files.length > 1 ? "s" : ""} au total
+            </div>
+            <div style={folderListStyle}>
+              {selectedFolderCounts.map(([folder, count]) => (
+                <span key={folder} style={folderChipStyle}>📁 {folder} · {count} image{count > 1 ? "s" : ""}</span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <PrimaryButton onClick={() => setConfirmUpload(true)} disabled={loading || files.length === 0} style={{ marginTop: 16 }}>
+          {loading ? "Envoi…" : "Lancer le traitement"}
+        </PrimaryButton>
+      </div>
+
+      <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={photoHistoryFilterStyle}>
+          <div>
+            <div style={{ fontWeight: 800, color: "#2b2a22" }}>Historique des traitements</div>
+            <div style={{ color: "#8b8574", fontSize: 12.5, marginTop: 3 }}>Les résultats terminés sont conservés dans la base de données.</div>
+          </div>
+          <input
+            type="date"
+            value={historyDate}
+            onChange={(event) => setHistoryDate(event.target.value)}
+            className="admin-input"
+            style={{ ...inputStyle, width: "auto", minWidth: 170 }}
+            aria-label="Filtrer l'historique par date d'inventaire"
+          />
+        </div>
+        {displayJobs.map((job) => (
+          <div key={job.id} style={{ ...panelStyle, padding: 16 }}>
+            <button
+              type="button"
+              onClick={() => toggleJob(job.id)}
+              aria-expanded={expandedJobIds.has(job.id)}
+              style={jobHeaderButtonStyle}
+            >
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, color: "#2b2a22" }}>
+                  <span style={{ ...jobChevronStyle, transform: expandedJobIds.has(job.id) ? "rotate(90deg)" : "rotate(0deg)" }}>›</span>
+                  {job.status === "completed" ? "Traitement terminé" : job.status === "failed" ? "Traitement interrompu" : <AnimatedProcessingLabel status={job.status} />}
+                </div>
+                <div style={{ color: "#8b8574", fontSize: 13, marginTop: 4 }}>
+                  {job.processed_photos}/{job.total_photos} photos traitées · Inventaire {job.inventory_date} · {formatJobDuration(job)}
+                </div>
+                {(job.status === "queued" || job.status === "processing") && (
+                  <div style={processingTrackStyle} aria-label="Traitement en cours">
+                    <div style={{ ...processingBarStyle, width: job.total_photos ? `${Math.max(8, (job.processed_photos / job.total_photos) * 100)}%` : "18%" }} />
+                  </div>
+                )}
+              </div>
+              <StatusBadge tone={job.status === "completed" ? "success" : job.status === "failed" ? "danger" : "info"}>
+                {job.status === "queued" ? "En attente" : job.status === "processing" ? "En cours" : job.status === "completed" ? "Terminé" : "Erreur"}
+              </StatusBadge>
+            </button>
+            {job.status === "completed" && expandedJobIds.has(job.id) && (
+              <div style={jobSummaryGridStyle}>
+                <SummaryMetric label="Codes détectés" value={job.codes_found} />
+                <SummaryMetric label="Ajoutés" value={job.added} tone="success" />
+                <SummaryMetric label="Doublons ignorés" value={job.duplicates} tone="warning" />
+                <SummaryMetric label="Photos traitées" value={`${job.processed_photos}/${job.total_photos}`} />
+              </div>
+            )}
+            {job.user_results?.length > 0 && expandedJobIds.has(job.id) && (
+              <div style={userPhotoResultsStyle}>
+                <div style={userPhotoResultsTitleStyle}>Résultats par utilisateur</div>
+                <div style={userPhotoResultsGridStyle}>
+                  {job.user_results.map((result) => (
+                    <div key={result.user_id} style={userPhotoResultStyle}>
+                      <div style={{ fontWeight: 800, color: "#2b2a22" }}>{result.username}</div>
+                      <div style={userPhotoResultMetaStyle}>
+                        {result.processed_photos}/{result.total_photos} photos · {result.codes_found} codes détectés
+                      </div>
+                      {result.codes.length > 0 && (
+                        <div style={userPhotoResultCodesStyle} title={result.codes.join(", ")}>
+                          {result.codes.join(" · ")}
+                        </div>
+                      )}
+                      <div style={userPhotoResultStatsStyle}>
+                        <span style={{ color: "#3b7d2a" }}>{result.added} ajoutés</span>
+                        <span style={{ color: "#a15c08" }}>{result.duplicates} doublons</span>
+                        {result.skipped > 0 && <span>{result.skipped} ignorées</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {job.status === "failed" && job.error && expandedJobIds.has(job.id) && <div style={jobErrorStyle}>{job.error}</div>}
+          </div>
+        ))}
+      </div>
+      {toast && (
+        <AdminToast toast={toast} onClose={() => setToast(null)} />
+      )}
+      {confirmUpload && (
+        <ConfirmDialog
+          title="Lancer le traitement des photos ?"
+          message={`${files.length} photo${files.length > 1 ? "s" : ""} seront envoyée${files.length > 1 ? "s" : ""} et analysée${files.length > 1 ? "s" : ""} par lecture de codes-barres.`}
+          confirmLabel="Envoyer et traiter"
+          onCancel={() => setConfirmUpload(false)}
+          onConfirm={launch}
+        />
+      )}
+    </div>
+  );
+}
+
+function AnimatedProcessingLabel({ status }: { status: BulkPhotoJobDto["status"] }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+      {status === "queued" ? "Préparation du traitement" : "Lecture des codes-barres"}
+      <span aria-hidden="true" style={{ display: "inline-flex", gap: 3 }}>
+        {[0, 1, 2].map((dot) => <span key={dot} style={{ ...processingDotStyle, animationDelay: `${dot * 140}ms` }}>•</span>)}
+      </span>
+    </span>
+  );
+}
+
+function AdminVideoImportView() {
+  const { token } = useAuth();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [jobs, setJobs] = useState<AdminVideoJobDto[]>([]);
+  const [history, setHistory] = useState<AdminVideoHistoryDto[]>([]);
+  const [historyDate, setHistoryDate] = useState("");
+  const [expandedJobIds, setExpandedJobIds] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(false);
+  const [confirmUpload, setConfirmUpload] = useState(false);
+  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const knownJobStatuses = useRef<Map<string, AdminVideoJobDto["status"]> | null>(null);
+
+  const selectedVideoFolders = Array.from(
+    files.reduce((folders, file) => {
+      const parts = (file.webkitRelativePath || file.name).split("/").filter(Boolean);
+      const folder = parts.length >= 3 ? parts[parts.length - 2] : "Dossier utilisateur";
+      folders.set(folder, (folders.get(folder) ?? 0) + 1);
+      return folders;
+    }, new Map<string, number>()),
+  );
+
+  useEffect(() => {
+    if (!toast) return;
+    const timeout = window.setTimeout(() => setToast(null), 3000);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
+
+  const loadJobs = async () => {
+    if (!token) return;
+    try {
+      const [nextJobs, completedJobs] = await Promise.all([
+        adminListVideoJobs(token),
+        adminListVideoHistory(token, historyDate || undefined),
+      ]);
+      const previousStatuses = knownJobStatuses.current;
+      if (previousStatuses) {
+        const completedJob = nextJobs.find(
+          (job) => job.status === "completed" && previousStatuses.get(job.id) !== "completed",
+        );
+        if (completedJob) {
+          setToast({ type: "success", message: `Le traitement vidéo de ${completedJob.filename} est terminé.` });
+        }
+      }
+      knownJobStatuses.current = new Map(nextJobs.map((job) => [job.id, job.status]));
+      setJobs(nextJobs);
+      setHistory(completedJobs);
+    } catch {
+      setToast({ type: "error", message: "Impossible de charger les traitements vidéo." });
+    }
+  };
+
+  useEffect(() => {
+    void loadJobs();
+    const timer = window.setInterval(() => void loadJobs(), 5000);
+    return () => window.clearInterval(timer);
+  }, [token, historyDate]);
+
+  const handleFolderSelection = (event: ChangeEvent<HTMLInputElement>) => {
+    setFiles(
+      Array.from(event.target.files ?? []).filter((file) =>
+        /\.(mp4|mov|avi|webm|mkv|m4v)$/i.test(file.name),
+      ),
+    );
+  };
+
+  const chooseFolder = async () => {
+    const picker = (window as Window & { showDirectoryPicker?: () => Promise<any> }).showDirectoryPicker;
+    if (!picker || !window.isSecureContext) {
+      inputRef.current?.click();
+      return;
+    }
+    try {
+      const directory = await picker();
+      const selected: File[] = [];
+      const collect = async (handle: any, path: string): Promise<void> => {
+        for await (const entry of handle.values()) {
+          const entryPath = `${path}/${entry.name}`;
+          if (entry.kind === "directory") await collect(entry, entryPath);
+          else if (entry.kind === "file" && /\.(mp4|mov|avi|webm|mkv|m4v)$/i.test(entry.name)) {
+            const file = await entry.getFile();
+            Object.defineProperty(file, "webkitRelativePath", { configurable: true, value: entryPath });
+            selected.push(file);
+          }
+        }
+      };
+      await collect(directory, directory.name);
+      setFiles(selected);
+      if (!selected.length) setToast({ type: "error", message: "Aucune vidéo supportée trouvée dans ce dossier." });
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === "AbortError")) {
+        setToast({ type: "error", message: "Impossible de lire le dossier vidéo." });
+      }
+    }
+  };
+
+  const launch = async () => {
+    if (!token || !files.length) return;
+    setConfirmUpload(false);
+    setLoading(true);
+    try {
+      const created = await adminCreateVideoJobs(token, files);
+      setJobs((current) => [...created, ...current]);
+      setFiles([]);
+      setToast({ type: "success", message: `${created.length} traitement(s) vidéo lancé(s).` });
+    } catch (error) {
+      setToast({ type: "error", message: error instanceof Error ? error.message : "Échec du lancement vidéo." });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggleJob = (jobId: string) => {
+    setExpandedJobIds((current) => {
+      const next = new Set(current);
+      if (next.has(jobId)) next.delete(jobId);
+      else next.add(jobId);
+      return next;
+    });
+  };
+
+  return (
+    <div>
+      <PageHeader title="Import de vidéos" subtitle="Un sous-dossier vidéo doit porter le nom exact d’un utilisateur existant." />
+      <div style={panelStyle}>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="video/*"
+          multiple
+          {...({ webkitdirectory: "", directory: "" } as object)}
+          style={{ display: "none" }}
+          onChange={handleFolderSelection}
+        />
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <PrimaryButton onClick={() => void chooseFolder()}><VideoIcon /> Choisir le dossier parent</PrimaryButton>
+          <span style={{ color: "#6f6a58", fontSize: 13 }}>{files.length ? `${selectedVideoFolders.length} sous-dossier(s) · ${files.length} vidéo(s)` : "Aucune vidéo sélectionnée"}</span>
+        </div>
+        {files.length > 0 && <div style={folderListStyle}>{selectedVideoFolders.map(([folder, count]) => <span key={folder} style={folderChipStyle}>📁 {folder} · {count} vidéo(s)</span>)}</div>}
+        <PrimaryButton onClick={() => setConfirmUpload(true)} disabled={loading || !files.length} style={{ marginTop: 16 }}>
+          {loading ? "Envoi…" : "Lancer le traitement vidéo"}
+        </PrimaryButton>
+      </div>
+      {confirmUpload && <ConfirmDialog
+        title="Lancer le traitement vidéo ?"
+        message={`${files.length} vidéo(s) seront associé(s) à leurs utilisateurs et analysé(s) par code-barres.`}
+        confirmLabel="Envoyer et traiter"
+        onCancel={() => setConfirmUpload(false)}
+        onConfirm={() => void launch()}
+      />}
+      <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={photoHistoryFilterStyle}>
+          <div>
+            <div style={{ fontWeight: 800, color: "#2b2a22" }}>Historique des traitements vidéo</div>
+            <div style={{ color: "#8b8574", fontSize: 12.5, marginTop: 3 }}>Les résultats terminés sont conservés dans la base de données.</div>
+          </div>
+          <input
+            type="date"
+            value={historyDate}
+            onChange={(event) => setHistoryDate(event.target.value)}
+            className="admin-input"
+            style={{ ...inputStyle, width: "auto", minWidth: 170 }}
+            aria-label="Filtrer l'historique vidéo par date d'inventaire"
+          />
+        </div>
+        {jobs.map((job) => (
+          <div key={job.id} style={{ ...panelStyle, padding: 16 }}>
+            <button type="button" onClick={() => toggleJob(job.id)} aria-expanded={expandedJobIds.has(job.id)} style={jobHeaderButtonStyle}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <strong style={{ display: "flex", alignItems: "center", gap: 8, color: "#2b2a22" }}>
+                  <span style={{ ...jobChevronStyle, transform: expandedJobIds.has(job.id) ? "rotate(90deg)" : "rotate(0deg)" }}>›</span>
+                  {job.username} · {job.filename}
+                </strong>
+                <div style={{ color: "#8b8574", fontSize: 13, marginTop: 5 }}>
+                  {job.status === "completed" ? `${job.result?.codes_found.length ?? 0} code(s) trouvé(s) · ${formatVideoDuration(job)}` : job.progress}
+                </div>
+              </div>
+              <StatusBadge tone={job.status === "completed" ? "success" : job.status === "failed" ? "danger" : "info"}>
+                {job.status === "completed" ? "Terminé" : job.status === "failed" ? "Erreur" : "En cours"}
+              </StatusBadge>
+            </button>
+            {job.status === "completed" && expandedJobIds.has(job.id) && job.result && (
+              <div style={userPhotoResultsStyle}>
+                {job.result.codes_found.map((code) => <div key={code.code} style={userPhotoResultCodesStyle}>{code.code} · {code.frame_hits} détection(s) · {code.added ? "ajouté" : "doublon"}</div>)}
+              </div>
+            )}
+            {expandedJobIds.has(job.id) && job.error && <div style={jobErrorStyle}>{job.error}</div>}
+          </div>
+        ))}
+        {history.map((batch) => (
+          <div key={batch.id} style={{ ...panelStyle, padding: 16 }}>
+            <button type="button" onClick={() => toggleJob(batch.id)} aria-expanded={expandedJobIds.has(batch.id)} style={jobHeaderButtonStyle}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <strong style={{ display: "flex", alignItems: "center", gap: 8, color: "#2b2a22" }}>
+                  <span style={{ ...jobChevronStyle, transform: expandedJobIds.has(batch.id) ? "rotate(90deg)" : "rotate(0deg)" }}>›</span>
+                  Traitement vidéo · {batch.total_videos} vidéo(s)
+                </strong>
+                <div style={{ color: "#8b8574", fontSize: 13, marginTop: 5 }}>
+                  Inventaire {batch.inventory_date} · {formatVideoHistoryDuration(batch)}
+                </div>
+              </div>
+              <StatusBadge tone="success">Terminé</StatusBadge>
+            </button>
+            {expandedJobIds.has(batch.id) && (
+              <div style={userPhotoResultsStyle}>
+                <div style={userPhotoResultsTitleStyle}>Résultats par utilisateur</div>
+                <div style={userPhotoResultsGridStyle}>
+                  {batch.users.map((userResult) => (
+                    <div key={userResult.user_id} style={userPhotoResultStyle}>
+                      <div style={{ fontWeight: 800, color: "#2b2a22" }}>{userResult.username}</div>
+                      <div style={userPhotoResultMetaStyle}>{userResult.videos} vidéo(s) · {userResult.codes_found.length} code(s) trouvé(s)</div>
+                      <div style={userPhotoResultStatsStyle}>
+                        <span style={{ color: "#3b7d2a" }}>{userResult.total_added} ajoutés</span>
+                        <span style={{ color: "#a15c08" }}>{userResult.total_duplicates} doublons</span>
+                      </div>
+                      {userResult.codes_found.length > 0 && (
+                        <div style={userPhotoResultCodesStyle}>
+                          {userResult.codes_found.map((code) => `${code.code} (${code.frame_hits})`).join(" · ")}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {toast && <AdminToast toast={toast} onClose={() => setToast(null)} />}
+    </div>
+  );
+}
+
+function formatJobDuration(job: BulkPhotoJobDto): string {
+  const start = job.started_at ?? job.created_at;
+  const end = job.finished_at ?? Date.now() / 1000;
+  const totalSeconds = Math.max(0, Math.round(end - start));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) return `Durée ${hours} h ${minutes} min`;
+  if (minutes > 0) return `Durée ${minutes} min ${seconds} s`;
+  return `Durée ${seconds} s`;
+}
+
+function formatVideoDuration(job: AdminVideoJobDto): string {
+  const seconds = Math.max(
+    0,
+    Math.round(
+      job.result?.processing_time_ms
+        ? job.result.processing_time_ms / 1000
+        : (job.finished_at ?? Date.now() / 1000) - (job.started_at ?? job.created_at),
+    ),
+  );
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return minutes > 0 ? `Durée ${minutes} min ${remainingSeconds} s` : `Durée ${remainingSeconds} s`;
+}
+
+function formatVideoHistoryDuration(batch: AdminVideoHistoryDto): string {
+  const seconds = Math.max(0, Math.round(batch.finished_at - batch.created_at));
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return minutes > 0 ? `Durée ${minutes} min ${remainingSeconds} s` : `Durée ${remainingSeconds} s`;
+}
+
+function AdminToast({
+  toast,
+  onClose,
+}: {
+  toast: { type: "success" | "error"; message: string };
+  onClose: () => void;
+}) {
+  return (
+    <div role="alert" style={{ ...photoToastStyle, background: toast.type === "error" ? "#b42318" : "#287d3c" }}>
+      <strong>{toast.type === "error" ? "Action impossible" : "Opération réussie"}</strong>
+      <span>{toast.message}</span>
+      <button type="button" aria-label="Fermer" onClick={onClose} style={toastCloseStyle}>×</button>
+    </div>
+  );
+}
+
+function ConfirmDialog({
+  title,
+  message,
+  confirmLabel,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div role="presentation" style={dialogBackdropStyle} onMouseDown={onCancel}>
+      <div role="dialog" aria-modal="true" aria-labelledby="admin-dialog-title" style={dialogStyle} onMouseDown={(event) => event.stopPropagation()}>
+        <div style={dialogIconStyle}>!</div>
+        <h2 id="admin-dialog-title" style={dialogTitleStyle}>{title}</h2>
+        <p style={dialogMessageStyle}>{message}</p>
+        <div style={dialogActionsStyle}>
+          <button type="button" onClick={onCancel} style={dialogCancelStyle}>Annuler</button>
+          <DangerButton onClick={onConfirm}>{confirmLabel}</DangerButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SummaryMetric({ label, value, tone = "default" }: { label: string; value: number | string; tone?: "default" | "success" | "warning" }) {
+  return <div style={{ background: "#faf9f5", border: "1px solid #eeece0", borderRadius: 10, padding: "9px 10px" }}><div style={{ fontSize: 18, fontWeight: 800, color: tone === "success" ? "#3b7d2a" : tone === "warning" ? "#a15c08" : "#2b2a22" }}>{value}</div><div style={{ color: "#8b8574", fontSize: 11.5, marginTop: 2 }}>{label}</div></div>;
 }
 
 // --------------------------------------------------------------------- //
@@ -1563,7 +2235,7 @@ function UserManagementView() {
         </PrimaryButton>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div className="admin-users-grid">
         {users.map((u) => {
           const isCurrentAdmin = u.id === user?.id;
           return (
@@ -1869,10 +2541,10 @@ function DangerButton({
 // Icons
 // --------------------------------------------------------------------- //
 
-function iconProps() {
+function iconProps(size = 17) {
   return {
-    width: 17,
-    height: 17,
+    width: size,
+    height: size,
     viewBox: "0 0 24 24",
     fill: "none",
     stroke: "currentColor",
@@ -1967,6 +2639,23 @@ const shellStyle: CSSProperties = {
   background: "#f7f6f1",
 };
 
+
+function FolderIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg {...iconProps(size)}>
+      <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z" />
+    </svg>
+  );
+}
+
+function VideoIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg {...iconProps(size)}>
+      <rect x="3" y="5" width="13" height="14" rx="2" />
+      <path d="m16 10 5-3v10l-5-3z" />
+    </svg>
+  );
+}
 const sidebarStyle: CSSProperties = {
   width: 250,
   flexShrink: 0,
@@ -2214,11 +2903,208 @@ const tableRowStyle: CSSProperties = {
   padding: "13px 18px",
 };
 
+const adminDeleteButtonStyle: CSSProperties = {
+  border: "1px solid rgba(192, 86, 79, 0.3)",
+  borderRadius: 8,
+  padding: "5px 8px",
+  background: "rgba(192, 86, 79, 0.06)",
+  color: "#8f3b36",
+  fontSize: 11.5,
+  fontWeight: 700,
+  cursor: "pointer",
+};
+
 const panelStyle: CSSProperties = {
   background: "#ffffff",
   border: "1px solid #eeece0",
   borderRadius: 16,
   padding: 22,
+};
+
+const photoSelectionStyle: CSSProperties = {
+  marginTop: 16,
+  padding: 14,
+  background: "#f7f6f1",
+  border: "1px solid #e8e5d8",
+  borderRadius: 12,
+};
+
+const folderListStyle: CSSProperties = {
+  display: "flex",
+  gap: 7,
+  flexWrap: "wrap",
+  marginTop: 12,
+};
+
+const folderChipStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  padding: "5px 9px",
+  borderRadius: 8,
+  background: "#fff",
+  border: "1px solid #e4dfcf",
+  color: "#59543f",
+  fontSize: 12,
+  fontWeight: 600,
+};
+
+const jobSummaryGridStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(125px, 1fr))",
+  gap: 8,
+  marginTop: 14,
+};
+
+const jobHeaderButtonStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "flex-start",
+  justifyContent: "space-between",
+  gap: 12,
+  width: "100%",
+  padding: 0,
+  border: 0,
+  background: "transparent",
+  textAlign: "left",
+  cursor: "pointer",
+  color: "inherit",
+};
+
+const jobChevronStyle: CSSProperties = {
+  display: "inline-block",
+  color: "#9a927a",
+  fontSize: 22,
+  fontWeight: 400,
+  lineHeight: "14px",
+  transition: "transform 160ms ease",
+};
+
+const userPhotoResultsStyle: CSSProperties = {
+  marginTop: 14,
+  paddingTop: 14,
+  borderTop: "1px solid #eeece0",
+};
+
+const photoHistoryFilterStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 14,
+  flexWrap: "wrap",
+  padding: "13px 15px",
+  border: "1px solid #e8e5d8",
+  borderRadius: 12,
+  background: "#faf9f4",
+};
+
+const userPhotoResultsTitleStyle: CSSProperties = {
+  color: "#59543f",
+  fontSize: 12,
+  fontWeight: 800,
+  marginBottom: 8,
+  textTransform: "uppercase",
+  letterSpacing: 0.3,
+};
+
+const userPhotoResultsGridStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+  gap: 8,
+};
+
+const userPhotoResultStyle: CSSProperties = {
+  padding: "10px 11px",
+  border: "1px solid #e8e5d8",
+  borderRadius: 10,
+  background: "#faf9f4",
+};
+
+const userPhotoResultMetaStyle: CSSProperties = {
+  color: "#7b7565",
+  fontSize: 12,
+  marginTop: 5,
+};
+
+const userPhotoResultCodesStyle: CSSProperties = {
+  marginTop: 7,
+  color: "#59543f",
+  fontFamily: "ui-monospace, monospace",
+  fontSize: 11.5,
+  lineHeight: 1.5,
+  overflowWrap: "anywhere",
+};
+
+const userPhotoResultStatsStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 8,
+  fontSize: 11.5,
+  fontWeight: 700,
+  marginTop: 7,
+};
+
+const jobErrorStyle: CSSProperties = {
+  marginTop: 12,
+  padding: "9px 10px",
+  borderRadius: 8,
+  background: "#fff1f0",
+  color: "#b42318",
+  fontSize: 12.5,
+};
+
+const photoToastStyle: CSSProperties = {
+  position: "fixed",
+  top: "calc(18px + var(--safe-top, 0px))",
+  left: "50%",
+  transform: "translateX(-50%)",
+  zIndex: 2000,
+  display: "flex",
+  alignItems: "flex-start",
+  gap: 9,
+  flexDirection: "column",
+  minWidth: "min(360px, calc(100vw - 40px))",
+  padding: "13px 42px 13px 15px",
+  borderRadius: 12,
+  color: "#fff",
+  boxShadow: "0 12px 30px rgba(43, 42, 34, 0.2)",
+  fontSize: 13,
+  animation: "admin-toast-in 180ms ease-out",
+};
+
+const processingTrackStyle: CSSProperties = {
+  height: 5,
+  marginTop: 10,
+  width: "min(360px, 100%)",
+  overflow: "hidden",
+  borderRadius: 999,
+  background: "#ece8d9",
+};
+
+const processingBarStyle: CSSProperties = {
+  height: "100%",
+  minWidth: 18,
+  borderRadius: 999,
+  background: "linear-gradient(90deg, #bdb184 0%, #dfe8b9 45%, #6d9c46 70%, #bdb184 100%)",
+  backgroundSize: "220% 100%",
+  animation: "admin-progress-shimmer 1.8s linear infinite",
+  transition: "width 400ms ease",
+};
+
+const processingDotStyle: CSSProperties = {
+  display: "inline-block",
+  color: "#6d9c46",
+  animation: "admin-processing-dot 1.1s ease-in-out infinite",
+};
+
+const toastCloseStyle: CSSProperties = {
+  position: "absolute",
+  top: 8,
+  right: 10,
+  border: 0,
+  background: "transparent",
+  color: "#fff",
+  fontSize: 20,
+  lineHeight: 1,
+  cursor: "pointer",
 };
 
 const activeInventoryCardStyle: CSSProperties = {
@@ -2228,6 +3114,70 @@ const activeInventoryCardStyle: CSSProperties = {
   borderRadius: 16,
   padding: "18px 20px",
   marginBottom: 20,
+};
+
+const dialogBackdropStyle: CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  zIndex: 2100,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 20,
+  background: "rgba(31, 36, 48, 0.34)",
+  backdropFilter: "blur(5px)",
+};
+
+const dialogStyle: CSSProperties = {
+  width: "min(100%, 420px)",
+  padding: 24,
+  borderRadius: 20,
+  background: "#fffdf8",
+  border: "1px solid rgba(189, 177, 132, 0.35)",
+  boxShadow: "0 24px 70px rgba(31, 36, 48, 0.25)",
+};
+
+const dialogIconStyle: CSSProperties = {
+  width: 38,
+  height: 38,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  borderRadius: "50%",
+  background: "#fff1df",
+  color: "#a15c08",
+  fontWeight: 900,
+  fontSize: 20,
+};
+
+const dialogTitleStyle: CSSProperties = {
+  margin: "17px 0 7px",
+  color: "#2b2a22",
+  fontSize: 19,
+};
+
+const dialogMessageStyle: CSSProperties = {
+  margin: 0,
+  color: "#716b5e",
+  fontSize: 14,
+  lineHeight: 1.55,
+};
+
+const dialogActionsStyle: CSSProperties = {
+  display: "flex",
+  justifyContent: "flex-end",
+  gap: 10,
+  marginTop: 24,
+};
+
+const dialogCancelStyle: CSSProperties = {
+  border: "1px solid #e4dfcf",
+  borderRadius: 10,
+  padding: "10px 14px",
+  background: "#fff",
+  color: "#59543f",
+  fontWeight: 700,
+  cursor: "pointer",
 };
 
 const formGridStyle: CSSProperties = {

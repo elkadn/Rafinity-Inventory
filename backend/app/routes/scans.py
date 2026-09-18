@@ -68,16 +68,40 @@ async def register_scan(
     if not code:
         return ScanRegisterResponse(added=False, reason="empty_code")
 
-    inv = await _get_active_inventory()
-    inventory_date = inv.inventory_date if inv else _today()
-
-    db = get_db()
-    record = ScanRecord(
+    return await register_code_for_user(
         user_id=user.id,
         username=user.username,
         code=code,
         method=payload.method,
         confidence=payload.confidence,
+    )
+
+
+async def register_code_for_user(
+    *,
+    user_id: str,
+    username: str,
+    code: str,
+    method: str,
+    confidence: float | None = None,
+    inventory_date: str | None = None,
+) -> ScanRegisterResponse:
+    """Register a code using the same uniqueness and inventory rules everywhere."""
+    code = code.strip()
+    if not code:
+        return ScanRegisterResponse(added=False, reason="empty_code")
+
+    if inventory_date is None:
+        inv = await _get_active_inventory()
+        inventory_date = inv.inventory_date if inv else _today()
+
+    db = get_db()
+    record = ScanRecord(
+        user_id=user_id,
+        username=username,
+        code=code,
+        method=method,
+        confidence=confidence,
         inventory_date=inventory_date,
     )
     doc = record.model_dump()
@@ -175,4 +199,5 @@ async def ocr_fallback(
 
 def _today() -> str:
     import datetime
+
     return datetime.date.today().isoformat()

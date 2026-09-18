@@ -27,6 +27,17 @@ scripts `backend/sql/oracle_schema.sql` puis
 `backend/sql/create_initial_users.sql` sont exécutés automatiquement lors de
 la première création du volume `oracle-data`.
 
+Pour une base existante, exécutez aussi une fois
+`backend/sql/add_photo_job_history.sql` afin d'activer l'historique des traitements photo.
+
+Exécutez également `backend/sql/add_video_job_history.sql` pour activer
+l'historique des traitements vidéo administrateur.
+
+Si l'historique vidéo existait déjà avant le regroupement par dossier, exécutez
+également `backend/sql/add_video_batch_id.sql`.
+
+Assurez-vous que la base de données est correctement configurée avant d'exécuter ce script.
+
 ### 2. Backend
 
 ```bash
@@ -291,7 +302,10 @@ docker run -d \
   -e APP_USER_PASSWORD=elkadn \
   gvenzl/oracle-xe:21-slim
 
-  docker exec -it oracle-xe sqlplus sys/elkadn@XEPDB1 as sysdba
+    docker exec -it oracle-xe sqlplus sys/elkadn@XEPDB1 as sysdba
+
+
+  docker exec -it oracle-xe sqlplus inventory_user/elkadn@XEPDB1 
 
 CREATE USER inventory_user IDENTIFIED BY elkadn;
 GRANT CREATE SESSION TO inventory_user;

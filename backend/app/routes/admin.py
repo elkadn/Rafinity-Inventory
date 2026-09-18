@@ -27,7 +27,9 @@ from app.schemas import (
     new_id,
 )
 
-router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
+router = APIRouter(
+    prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)]
+)
 
 
 async def _users_by_id() -> dict:
@@ -104,8 +106,19 @@ async def list_days() -> list[DaySummary]:
     db = get_db()
     users = await _users_by_id()
     pipeline = [
-        {"$group": {"_id": {"date": "$inventory_date", "user_id": "$user_id"}, "count": {"$sum": 1}}},
-        {"$group": {"_id": "$_id.date", "total_scans": {"$sum": "$count"}, "users": {"$push": {"user_id": "$_id.user_id", "count": "$count"}}}},
+        {
+            "$group": {
+                "_id": {"date": "$inventory_date", "user_id": "$user_id"},
+                "count": {"$sum": 1},
+            }
+        },
+        {
+            "$group": {
+                "_id": "$_id.date",
+                "total_scans": {"$sum": "$count"},
+                "users": {"$push": {"user_id": "$_id.user_id", "count": "$count"}},
+            }
+        },
         {"$sort": {"_id": -1}},
     ]
     results = await db.scans.aggregate(pipeline).to_list(length=1000)
@@ -114,9 +127,19 @@ async def list_days() -> list[DaySummary]:
         enriched = []
         for u in r["users"]:
             info = users.get(u["user_id"], {})
-            enriched.append({"user_id": u["user_id"], "username": info.get("username", "?"), "nom": info.get("nom", "?"), "prenom": info.get("prenom", "?"), "count": u["count"]})
+            enriched.append(
+                {
+                    "user_id": u["user_id"],
+                    "username": info.get("username", "?"),
+                    "nom": info.get("nom", "?"),
+                    "prenom": info.get("prenom", "?"),
+                    "count": u["count"],
+                }
+            )
         enriched.sort(key=lambda u: u["username"])
-        days.append(DaySummary(date=r["_id"], total_scans=r["total_scans"], users=enriched))
+        days.append(
+            DaySummary(date=r["_id"], total_scans=r["total_scans"], users=enriched)
+        )
     return days
 
 
@@ -128,18 +151,78 @@ async def user_scans_for_day(inventory_date: str, user_id: str) -> UserDayScans:
         raise HTTPException(status_code=404, detail="Utilisateur introuvable.")
 
     # Get deleted scan IDs so we can flag them in the admin view
-    del_docs = await db.deletions.find({"user_id": user_id, "inventory_date": inventory_date}).to_list(length=10000)
+    del_docs = await db.deletions.find(
+        {"user_id": user_id, "inventory_date": inventory_date}
+    ).to_list(length=10000)
     deleted_ids = {d["scan_id"] for d in del_docs}
 
-    docs = await db.scans.find({"inventory_date": inventory_date, "user_id": user_id}).sort("scanned_at", -1).to_list(length=10000)
+    docs = (
+        await db.scans.find({"inventory_date": inventory_date, "user_id": user_id})
+        .sort("scanned_at", -1)
+        .to_list(length=10000)
+    )
     scans = [ScanRecord(**{**d, "id": d["_id"]}) for d in docs]
 
     return UserDayScans(
         date=inventory_date,
-        user=UserPublic(id=user_doc["_id"], username=user_doc["username"], nom=user_doc["nom"], prenom=user_doc["prenom"], role=user_doc["role"], ip_poste=user_doc.get("ip_poste"), date_creation=user_doc["date_creation"], statut=user_doc["statut"]),
+        user=UserPublic(
+            id=user_doc["_id"],
+            username=user_doc["username"],
+            nom=user_doc["nom"],
+            prenom=user_doc["prenom"],
+            role=user_doc["role"],
+            ip_poste=user_doc.get("ip_poste"),
+            date_creation=user_doc["date_creation"],
+            statut=user_doc["statut"],
+        ),
         scans=scans,
         deleted_scan_ids=list(deleted_ids),
     )
+
+
+@router.delete(
+    "/days/{inventory_date}/users/{user_id}/scans/{scan_id}",
+    response_model=DeletionRecord,
+)
+async def delete_user_scan_as_admin(
+    inventory_date: str,
+    user_id: str,
+    scan_id: str,
+) -> DeletionRecord:
+    """Delete a scan from a user's admin view and attribute it to that user."""
+    db = get_db()
+    user_doc = await db.users.find_one({"_id": user_id})
+    if not user_doc:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable.")
+
+    scan_doc = await db.scans.find_one({"_id": scan_id})
+    if (
+        not scan_doc
+        or scan_doc.get("user_id") != user_id
+        or scan_doc.get("inventory_date") != inventory_date
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Scan introuvable pour cet utilisateur et cet inventaire.",
+        )
+
+    existing = await db.deletions.find_one({"scan_id": scan_id})
+    if existing:
+        raise HTTPException(status_code=409, detail="Ce scan a déjà été supprimé.")
+
+    deletion = DeletionRecord(
+        scan_id=scan_id,
+        code=scan_doc["code"],
+        user_id=user_id,
+        username=user_doc["username"],
+        inventory_date=inventory_date,
+        reason="Suppression effectuée depuis l'administration.",
+    )
+    deletion_doc = deletion.model_dump()
+    deletion_doc["_id"] = deletion_doc.pop("id")
+    await db.deletions.insert_one(deletion_doc)
+    await db.scans.delete_one({"_id": scan_id})
+    return deletion
 
 
 @router.get("/days/{inventory_date}/merged", response_model=MergedDayResponse)
@@ -147,21 +230,47 @@ async def merged_day(inventory_date: str) -> MergedDayResponse:
     """All unique codes for this inventory_date, across every user. Excludes deleted scans."""
     db = get_db()
     # Get all deleted scan IDs for this inventory
-    del_docs = await db.deletions.find({"inventory_date": inventory_date}).to_list(length=100000)
+    del_docs = await db.deletions.find({"inventory_date": inventory_date}).to_list(
+        length=100000
+    )
     deleted_ids = {d["scan_id"] for d in del_docs}
 
     pipeline = [
-        {"$match": {"inventory_date": inventory_date, "_id": {"$nin": list(deleted_ids)}}},
-        {"$group": {"_id": "$code", "count": {"$sum": 1}, "users": {"$addToSet": "$username"}, "methods": {"$addToSet": "$method"}}},
+        {
+            "$match": {
+                "inventory_date": inventory_date,
+                "_id": {"$nin": list(deleted_ids)},
+            }
+        },
+        {
+            "$group": {
+                "_id": "$code",
+                "count": {"$sum": 1},
+                "users": {"$addToSet": "$username"},
+                "methods": {"$addToSet": "$method"},
+            }
+        },
         {"$sort": {"_id": 1}},
     ]
     results = await db.scans.aggregate(pipeline).to_list(length=100000)
-    codes = [MergedCodeEntry(code=r["_id"], count=r["count"], users=r["users"], methods=r["methods"]) for r in results]
+    codes = [
+        MergedCodeEntry(
+            code=r["_id"], count=r["count"], users=r["users"], methods=r["methods"]
+        )
+        for r in results
+    ]
     conflicts = sum(1 for c in codes if len(c.users) > 1)
-    return MergedDayResponse(date=inventory_date, codes=codes, total_unique_codes=len(codes), conflicts=conflicts)
+    return MergedDayResponse(
+        date=inventory_date,
+        codes=codes,
+        total_unique_codes=len(codes),
+        conflicts=conflicts,
+    )
 
 
-def _xlsx_response(headers: list[str], rows: list[list[object]], filename: str) -> StreamingResponse:
+def _xlsx_response(
+    headers: list[str], rows: list[list[object]], filename: str
+) -> StreamingResponse:
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Export"
@@ -187,23 +296,53 @@ async def export_day_excel(inventory_date: str, user_id: Optional[str] = None):
     db = get_db()
 
     if user_id:
-        del_docs = await db.deletions.find({"user_id": user_id, "inventory_date": inventory_date}).to_list(length=10000)
+        del_docs = await db.deletions.find(
+            {"user_id": user_id, "inventory_date": inventory_date}
+        ).to_list(length=10000)
         deleted_ids = {d["scan_id"] for d in del_docs}
-        docs = await db.scans.find({"inventory_date": inventory_date, "user_id": user_id, "_id": {"$nin": list(deleted_ids)}}).sort("scanned_at", 1).to_list(length=10000)
+        docs = (
+            await db.scans.find(
+                {
+                    "inventory_date": inventory_date,
+                    "user_id": user_id,
+                    "_id": {"$nin": list(deleted_ids)},
+                }
+            )
+            .sort("scanned_at", 1)
+            .to_list(length=10000)
+        )
         headers = ["code", "methode", "date_reelle_scan", "date_inventaire"]
-        rows = [[d["code"], d["method"] or "", d["scan_date"], d.get("inventory_date", "")] for d in docs]
+        rows = [
+            [d["code"], d["method"] or "", d["scan_date"], d.get("inventory_date", "")]
+            for d in docs
+        ]
         filename = f"scans-{inventory_date}-{user_id}.xlsx"
     else:
-        del_docs = await db.deletions.find({"inventory_date": inventory_date}).to_list(length=100000)
+        del_docs = await db.deletions.find({"inventory_date": inventory_date}).to_list(
+            length=100000
+        )
         deleted_ids = {d["scan_id"] for d in del_docs}
         pipeline = [
-            {"$match": {"inventory_date": inventory_date, "_id": {"$nin": list(deleted_ids)}}},
-            {"$group": {"_id": "$code", "users": {"$addToSet": "$username"}, "methods": {"$addToSet": "$method"}}},
+            {
+                "$match": {
+                    "inventory_date": inventory_date,
+                    "_id": {"$nin": list(deleted_ids)},
+                }
+            },
+            {
+                "$group": {
+                    "_id": "$code",
+                    "users": {"$addToSet": "$username"},
+                    "methods": {"$addToSet": "$method"},
+                }
+            },
             {"$sort": {"_id": 1}},
         ]
         results = await db.scans.aggregate(pipeline).to_list(length=100000)
         headers = ["code", "utilisateurs", "methodes"]
-        rows = [[r["_id"], ";".join(r["users"]), ";".join(r["methods"])] for r in results]
+        rows = [
+            [r["_id"], ";".join(r["users"]), ";".join(r["methods"])] for r in results
+        ]
         filename = f"scans-{inventory_date}-fusion.xlsx"
 
     return _xlsx_response(headers, rows, filename)
@@ -235,18 +374,49 @@ async def list_deletions(
 async def list_users() -> list[UserPublic]:
     db = get_db()
     docs = await db.users.find({}).sort("username", 1).to_list(length=1000)
-    return [UserPublic(id=d["_id"], username=d["username"], nom=d["nom"], prenom=d["prenom"], role=d["role"], ip_poste=d.get("ip_poste"), date_creation=d["date_creation"], statut=d["statut"]) for d in docs]
+    return [
+        UserPublic(
+            id=d["_id"],
+            username=d["username"],
+            nom=d["nom"],
+            prenom=d["prenom"],
+            role=d["role"],
+            ip_poste=d.get("ip_poste"),
+            date_creation=d["date_creation"],
+            statut=d["statut"],
+        )
+        for d in docs
+    ]
 
 
 @router.post("/users", response_model=UserPublic, status_code=status.HTTP_201_CREATED)
 async def create_user(payload: UserCreate) -> UserPublic:
     db = get_db()
-    doc = {"_id": new_id(), "username": payload.username, "password_hash": hash_password(payload.password), "nom": payload.nom, "prenom": payload.prenom, "role": payload.role, "ip_poste": payload.ip_poste, "date_creation": time.time(), "statut": "actif"}
+    doc = {
+        "_id": new_id(),
+        "username": payload.username,
+        "password_hash": hash_password(payload.password),
+        "nom": payload.nom,
+        "prenom": payload.prenom,
+        "role": payload.role,
+        "ip_poste": payload.ip_poste,
+        "date_creation": time.time(),
+        "statut": "actif",
+    }
     try:
         await db.users.insert_one(doc)
     except DuplicateKeyError:
         raise HTTPException(status_code=409, detail="Ce nom d'utilisateur existe déjà.")
-    return UserPublic(id=doc["_id"], username=doc["username"], nom=doc["nom"], prenom=doc["prenom"], role=doc["role"], ip_poste=doc["ip_poste"], date_creation=doc["date_creation"], statut=doc["statut"])
+    return UserPublic(
+        id=doc["_id"],
+        username=doc["username"],
+        nom=doc["nom"],
+        prenom=doc["prenom"],
+        role=doc["role"],
+        ip_poste=doc["ip_poste"],
+        date_creation=doc["date_creation"],
+        statut=doc["statut"],
+    )
 
 
 @router.patch("/users/{user_id}", response_model=UserPublic)
@@ -256,7 +426,9 @@ async def update_user(
     admin: UserPublic = Depends(require_admin),
 ) -> UserPublic:
     db = get_db()
-    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+    updates = {
+        k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None
+    }
 
     if user_id == admin.id and "statut" in updates and updates["statut"] == "inactif":
         raise HTTPException(
@@ -273,4 +445,13 @@ async def update_user(
     doc = await db.users.find_one({"_id": user_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Utilisateur introuvable.")
-    return UserPublic(id=doc["_id"], username=doc["username"], nom=doc["nom"], prenom=doc["prenom"], role=doc["role"], ip_poste=doc.get("ip_poste"), date_creation=doc["date_creation"], statut=doc["statut"])
+    return UserPublic(
+        id=doc["_id"],
+        username=doc["username"],
+        nom=doc["nom"],
+        prenom=doc["prenom"],
+        role=doc["role"],
+        ip_poste=doc.get("ip_poste"),
+        date_creation=doc["date_creation"],
+        statut=doc["statut"],
+    )

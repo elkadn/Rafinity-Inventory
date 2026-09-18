@@ -137,6 +137,7 @@ export interface UserDayScansDto {
   date: string;
   user: AuthUserDto;
   scans: ScanDto[];
+  deleted_scan_ids?: string[];
 }
 
 export interface MergedCodeEntryDto {
@@ -164,6 +165,19 @@ export async function adminUserDayScans(
   userId: string
 ): Promise<UserDayScansDto> {
   const res = await fetch(`${API_BASE}/admin/days/${date}/users/${userId}`, {
+    headers: authHeaders(token),
+  });
+  return handle(res);
+}
+
+export async function adminDeleteUserScan(
+  token: string,
+  date: string,
+  userId: string,
+  scanId: string,
+): Promise<DeletionDto> {
+  const res = await fetch(`${API_BASE}/admin/days/${date}/users/${userId}/scans/${scanId}`, {
+    method: "DELETE",
     headers: authHeaders(token),
   });
   return handle(res);
@@ -230,6 +244,126 @@ export async function adminUpdateUser(
     headers: { "Content-Type": "application/json", ...authHeaders(token) },
     body: JSON.stringify(payload),
   });
+  return handle(res);
+}
+
+export interface UserPhotoResultDto {
+  user_id: string;
+  username: string;
+  total_photos: number;
+  processed_photos: number;
+  codes_found: number;
+  added: number;
+  duplicates: number;
+  skipped: number;
+  codes: string[];
+}
+
+export interface BulkPhotoJobDto {
+  id: string;
+  status: "queued" | "processing" | "completed" | "failed";
+  progress: string;
+  created_at: number;
+  started_at: number | null;
+  finished_at: number | null;
+  total_photos: number;
+  processed_photos: number;
+  codes_found: number;
+  added: number;
+  duplicates: number;
+  skipped: number;
+  inventory_date: string;
+  error: string | null;
+  user_results: UserPhotoResultDto[];
+}
+
+export async function adminCreatePhotoJob(
+  token: string,
+  files: FileList | File[],
+): Promise<BulkPhotoJobDto> {
+  const form = new FormData();
+  Array.from(files).forEach((file) => form.append("files", file, file.webkitRelativePath || file.name));
+  const res = await fetch(`${API_BASE}/admin/photo-jobs`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: form,
+  });
+  return handle(res);
+}
+
+export async function adminListPhotoJobs(token: string): Promise<BulkPhotoJobDto[]> {
+  const res = await fetch(`${API_BASE}/admin/photo-jobs`, { headers: authHeaders(token) });
+  return handle(res);
+}
+
+export async function adminListPhotoHistory(
+  token: string,
+  inventoryDate?: string,
+): Promise<BulkPhotoJobDto[]> {
+  const url = new URL(`${API_BASE}/admin/photo-history`, window.location.href);
+  if (inventoryDate) url.searchParams.set("inventory_date", inventoryDate);
+  const res = await fetch(url.toString(), { headers: authHeaders(token) });
+  return handle(res);
+}
+
+export interface AdminVideoJobDto {
+  id: string;
+  user_id: string;
+  username: string;
+  admin_id?: string;
+  filename: string;
+  status: "queued" | "processing" | "completed" | "failed";
+  progress: string;
+  created_at: number;
+  started_at: number | null;
+  finished_at: number | null;
+  result: VideoExtractionResponse | null;
+  error: string | null;
+  inventory_date: string;
+}
+
+export interface AdminVideoUserHistoryDto {
+  user_id: string;
+  username: string;
+  videos: number;
+  codes_found: VideoCodeResult[];
+  total_added: number;
+  total_duplicates: number;
+}
+
+export interface AdminVideoHistoryDto {
+  id: string;
+  batch_id: string;
+  inventory_date: string;
+  created_at: number;
+  finished_at: number;
+  total_videos: number;
+  users: AdminVideoUserHistoryDto[];
+}
+
+export async function adminCreateVideoJobs(token: string, files: File[]): Promise<AdminVideoJobDto[]> {
+  const form = new FormData();
+  files.forEach((file) => form.append("files", file, file.webkitRelativePath || file.name));
+  const res = await fetch(`${API_BASE}/admin/video/jobs`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: form,
+  });
+  return handle(res);
+}
+
+export async function adminListVideoJobs(token: string): Promise<AdminVideoJobDto[]> {
+  const res = await fetch(`${API_BASE}/admin/video/jobs`, { headers: authHeaders(token) });
+  return handle(res);
+}
+
+export async function adminListVideoHistory(
+  token: string,
+  inventoryDate?: string,
+): Promise<AdminVideoHistoryDto[]> {
+  const url = new URL(`${API_BASE}/admin/video/history`, window.location.href);
+  if (inventoryDate) url.searchParams.set("inventory_date", inventoryDate);
+  const res = await fetch(url.toString(), { headers: authHeaders(token) });
   return handle(res);
 }
 

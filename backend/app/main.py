@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.db import connect_and_init, close
 from app.schemas import HealthResponse
-from app.routes import auth, scans, admin, video
+from app.routes import auth, scans, admin, video, bulk_photos
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -27,6 +27,7 @@ app.include_router(auth.router)
 app.include_router(scans.router)
 app.include_router(admin.router)
 app.include_router(video.router)
+app.include_router(bulk_photos.router)
 
 
 # @app.on_event("startup")
@@ -39,6 +40,7 @@ async def on_startup() -> None:
     from app.ocr import _get_reader
 
     asyncio.get_event_loop().run_in_executor(None, _get_reader)
+    await bulk_photos.resume_pending_jobs()
 
 
 @app.on_event("shutdown")

@@ -75,6 +75,7 @@ export default function VideoScanPage() {
     null,
   );
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
+  const [savePromptFile, setSavePromptFile] = useState<File | null>(null);
   const batchInputRef = useRef<HTMLInputElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
@@ -164,15 +165,7 @@ export default function VideoScanPage() {
       addBatchFiles([file]);
       stopCamera();
       setCameraOpen(false);
-      if (
-        window.confirm(
-          "Voulez-vous enregistrer cette vidéo sur votre téléphone ?",
-        )
-      ) {
-        void saveVideoToPhone(file).catch(() => {
-          // The video remains available for analysis if saving is cancelled.
-        });
-      }
+      setSavePromptFile(file);
     };
     recorder.start(1000);
     recordingTimerRef.current = window.setInterval(() => {
@@ -716,6 +709,44 @@ export default function VideoScanPage() {
           <ResultsView result={phase.result} onReset={handleReset} />
         )}
       </main>
+        {savePromptFile && (
+          <div style={dialogBackdropStyle} role="presentation">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="save-video-title"
+              style={dialogStyle}
+            >
+              <div style={dialogIconStyle}><DownloadIcon size={20} /></div>
+              <h2 id="save-video-title" style={dialogTitleStyle}>
+                Enregistrer la vidéo ?
+              </h2>
+              <p style={dialogTextStyle}>
+                La vidéo est prête. Voulez-vous aussi la conserver sur votre téléphone ?
+              </p>
+              <div style={dialogActionsStyle}>
+                <button
+                  type="button"
+                  style={dialogSecondaryStyle}
+                  onClick={() => setSavePromptFile(null)}
+                >
+                  Non, merci
+                </button>
+                <button
+                  type="button"
+                  style={primaryBtnStyle}
+                  onClick={() => {
+                    const file = savePromptFile;
+                    setSavePromptFile(null);
+                    void saveVideoToPhone(file).catch(() => undefined);
+                  }}
+                >
+                  Enregistrer
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
     </div>
   );
 }
@@ -993,5 +1024,64 @@ const removeFileBtnStyle: CSSProperties = {
   border: "none",
   padding: "4px 0",
   fontSize: 12,
+  cursor: "pointer",
+};
+
+const dialogBackdropStyle: CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  zIndex: 30,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 20,
+  background: "rgba(15, 23, 42, 0.48)",
+};
+
+const dialogStyle: CSSProperties = {
+  width: "min(100%, 420px)",
+  background: "var(--color-surface)",
+  border: "1px solid var(--color-border)",
+  borderRadius: 18,
+  padding: 24,
+  boxShadow: "0 24px 70px rgba(15, 23, 42, 0.24)",
+};
+
+const dialogIconStyle: CSSProperties = {
+  width: 42,
+  height: 42,
+  display: "grid",
+  placeItems: "center",
+  borderRadius: 12,
+  color: "var(--color-info)",
+  background: "rgba(55, 138, 221, 0.12)",
+};
+
+const dialogTitleStyle: CSSProperties = {
+  margin: "16px 0 6px",
+  fontSize: 19,
+};
+
+const dialogTextStyle: CSSProperties = {
+  margin: 0,
+  color: "var(--color-text-muted)",
+  fontSize: 14,
+  lineHeight: 1.5,
+};
+
+const dialogActionsStyle: CSSProperties = {
+  display: "flex",
+  justifyContent: "flex-end",
+  gap: 10,
+  marginTop: 22,
+};
+
+const dialogSecondaryStyle: CSSProperties = {
+  border: "1px solid var(--color-border)",
+  borderRadius: 10,
+  padding: "10px 14px",
+  background: "transparent",
+  color: "var(--color-text)",
+  fontWeight: 600,
   cursor: "pointer",
 };
