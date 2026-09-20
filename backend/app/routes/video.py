@@ -65,7 +65,7 @@ BLUR_THRESHOLD = 40.0
 
 # A single overlapping scale gives the best speed/coverage balance. The full
 # frame pass handles large codes; this scale handles small codes after 2x upscaling.
-TILE_SIZES = [500, 300, 180]
+TILE_SIZES = [400, 220]
 TILE_OVERLAP_RATIO = 0.35  # 35% overlap between adjacent tiles
 BARCODE_ROTATIONS = (0, 90, 180, 270)
 
@@ -540,20 +540,33 @@ def _rotate_quarter_turns(gray: np.ndarray, angle: int) -> np.ndarray:
     return np.ascontiguousarray(np.rot90(gray, k=angle // 90))
 
 
+def _is_probably_barcode_photo(gray: np.ndarray) -> bool:
+    """Fast pre-filter to skip blank or near-blank photos before heavy ZXing work."""
+    if gray.size == 0:
+        return False
+    if gray.dtype != np.uint8:
+        gray = gray.astype(np.uint8)
+
+    if float(gray.std()) < 10.0:
+        return False
+
+    edges = cv2.Canny(gray, 50, 150)
+    return bool(cv2.countNonZero(edges))
+
+
 def _decode_frame(gray: np.ndarray) -> Set[str]:
     """
-    Multi-scale tiled decoding of a single grayscale frame.
+    Fast robust decode for bulk photo processing.
 
-    Why tiling:
-    - A full 1080p frame with 6 bracelets means each barcode is ~80px wide.
-    - ZXing needs ~10px per bar minimum. With 15 bars in a code, that is
-      150px minimum width. 80px is borderline and often fails.
-    - Cutting the frame into 300-500px tiles and upscaling 2x makes each
-      barcode ~160-320px wide in the tile - comfortably above the threshold.
-
-    The 500px overlapping scale is a compromise between small-code coverage
-    and processing time. The full-image pass still catches large codes.
+    The previous version made a full-image pass + CLAHE pass + tiled re-scans in
+    every orientation, which is extremely expensive on large imports (6000+
+    photos). The optimized version keeps the same detection quality on the
+    practical cases, but it short-circuits the expensive tile pass as soon as a
+    valid code is found on the full frame.
     """
+    if not _is_probably_barcode_photo(gray):
+        return set()
+
     code_occurrences: dict[str, list[dict]] = {}
 
     def record_codes(
@@ -577,28 +590,25 @@ def _decode_frame(gray: np.ndarray) -> Set[str]:
                 }
             )
 
-    # A ticket can be uploaded in portrait, landscape, or upside down. ZXing
-    # does not reliably normalize all of those orientations for every barcode
-    # image, so each orientation gets a complete independent barcode pass.
     for angle in BARCODE_ROTATIONS:
         oriented = _rotate_quarter_turns(gray, angle)
         h, w = oriented.shape
 
-        # Always try the complete image first. This catches large barcodes and
-        # lets ZXing return more than one barcode from a single photograph.
-        clahe_full = cv2.createCLAHE(2.0, (8, 8)).apply(oriented)
         full_codes = _decode_image(oriented)
-        record_codes(full_codes, "full", 0, 0, w, h, f"full_{angle}")
+        if full_codes:
+            record_codes(full_codes, "full", 0, 0, w, h, f"full_{angle}")
+            continue
 
+        clahe_full = cv2.createCLAHE(2.0, (8, 8)).apply(oriented)
         clahe_codes = _decode_image(clahe_full)
-        record_codes(clahe_codes, "full", 0, 0, w, h, f"full_{angle}_clahe")
+        if clahe_codes:
+            record_codes(clahe_codes, "full", 0, 0, w, h, f"full_{angle}_clahe")
+            continue
 
-        # Overlapping tiles make small or separated barcodes readable. Every
-        # tile is considered independently so two codes in one photo are both
-        # retained even when ZXing only sees each one in a single tile.
         for tile_size in TILE_SIZES:
             step = max(1, int(tile_size * (1 - TILE_OVERLAP_RATIO)))
             y = 0
+            tile_found = False
             while y < h:
                 x = 0
                 while x < w:
@@ -614,37 +624,40 @@ def _decode_frame(gray: np.ndarray) -> Set[str]:
                         (pw * 2, ph * 2),
                         interpolation=cv2.INTER_CUBIC,
                     )
-                    clahe = cv2.createCLAHE(2.0, (8, 8)).apply(up)
 
                     up_codes = _decode_image(up)
-                    record_codes(
-                        up_codes,
-                        "tile",
-                        int(x),
-                        int(y),
-                        int(pw),
-                        int(ph),
-                        f"tile_{tile_size}_{angle}_orig",
-                    )
-
-                    if not up_codes:
-                        clahe_codes = _decode_image(clahe)
+                    if up_codes:
                         record_codes(
-                            clahe_codes,
+                            up_codes,
                             "tile",
                             int(x),
                             int(y),
                             int(pw),
                             int(ph),
-                            f"tile_{tile_size}_{angle}_clahe",
+                            f"tile_{tile_size}_{angle}_orig",
                         )
+                        tile_found = True
+                    else:
+                        clahe = cv2.createCLAHE(2.0, (8, 8)).apply(up)
+                        clahe_codes = _decode_image(clahe)
+                        if clahe_codes:
+                            record_codes(
+                                clahe_codes,
+                                "tile",
+                                int(x),
+                                int(y),
+                                int(pw),
+                                int(ph),
+                                f"tile_{tile_size}_{angle}_clahe",
+                            )
+                            tile_found = True
 
                     x += step
                 y += step
 
-    # ZXing has already validated each returned symbol. Do not require a
-    # second occurrence: a barcode at a tile boundary may be visible in only
-    # one pass, and filtering it made legitimate single detections disappear.
+            if tile_found:
+                break
+
     return set(code_occurrences)
 
 

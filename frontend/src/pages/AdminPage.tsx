@@ -22,14 +22,9 @@ import {
   type ActiveInventoryDto,
   type DeletionDto,
   type BulkPhotoJobDto,
-  type AdminVideoJobDto,
-  type AdminVideoHistoryDto,
   adminCreatePhotoJob,
   adminListPhotoJobs,
   adminListPhotoHistory,
-  adminCreateVideoJobs,
-  adminListVideoJobs,
-  adminListVideoHistory,
 } from "../lib/api";
 import { DownloadIcon } from "../components/icons";
 
@@ -40,16 +35,14 @@ type View =
   | { kind: "merged"; date: string }
   | { kind: "users" }
   | { kind: "photos" }
-  | { kind: "videos" }
   | { kind: "inventory" }
   | { kind: "deletions" };
 
-type NavKey = "days" | "photos" | "videos" | "inventory" | "deletions" | "users";
+type NavKey = "days" | "photos" | "inventory" | "deletions" | "users";
 
 const NAV_ITEMS: { key: NavKey; label: string; icon: ReactNode }[] = [
   { key: "days", label: "Scans", icon: <ScanIcon /> },
   { key: "photos", label: "Photos", icon: <FolderIcon /> },
-  { key: "videos", label: "Vidéos", icon: <VideoIcon /> },
   { key: "inventory", label: "Inventaire", icon: <InventoryIcon /> },
   { key: "deletions", label: "Suppressions", icon: <TrashIcon /> },
   { key: "users", label: "Utilisateurs", icon: <UsersIcon /> },
@@ -360,7 +353,6 @@ export default function AdminPage() {
             />
           )}
           {view.kind === "photos" && <PhotoImportView />}
-                    {view.kind === "videos" && <AdminVideoImportView />}
           {view.kind === "deletions" && <DeletionsView />}
           {view.kind === "users" && <UserManagementView />}
         </main>
@@ -1214,13 +1206,19 @@ function PhotoImportView() {
       }
       const allJobs = [...activeJobs, ...completedJobs];
       const previousStatuses = knownJobStatuses.current;
-      if (previousStatuses) {
-        const completedJob = allJobs.find(
-          (job) => job.status === "completed" && previousStatuses.get(job.id) !== "completed",
-        );
-        if (completedJob) {
-          setToast({ type: "success", message: `Le traitement photo de ${completedJob.total_photos} image(s) est terminé.` });
-        }
+      const statusChangedJob = previousStatuses
+        ? allJobs.find(
+            (job) =>
+              job.status === "completed" &&
+              previousStatuses.get(job.id) !== "completed" &&
+              previousStatuses.get(job.id) !== undefined,
+          )
+        : null;
+      if (statusChangedJob && !historyDate) {
+        setToast({
+          type: "success",
+          message: `Le traitement photo de ${statusChangedJob.total_photos} image(s) est terminé.`,
+        });
       }
       knownJobStatuses.current = new Map(allJobs.map((job) => [job.id, job.status]));
       setJobs(activeJobs);
@@ -1319,14 +1317,33 @@ function PhotoImportView() {
             <div style={{ fontWeight: 800, color: "#2b2a22" }}>Historique des traitements</div>
             <div style={{ color: "#8b8574", fontSize: 12.5, marginTop: 3 }}>Les résultats terminés sont conservés dans la base de données.</div>
           </div>
-          <input
-            type="date"
-            value={historyDate}
-            onChange={(event) => setHistoryDate(event.target.value)}
-            className="admin-input"
-            style={{ ...inputStyle, width: "auto", minWidth: 170 }}
-            aria-label="Filtrer l'historique par date d'inventaire"
-          />
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <input
+              type="date"
+              value={historyDate}
+              onChange={(event) => setHistoryDate(event.target.value)}
+              className="admin-input"
+              style={{ ...inputStyle, width: "auto", minWidth: 170 }}
+              aria-label="Filtrer l'historique par date d'inventaire"
+            />
+            {historyDate && (
+              <button
+                type="button"
+                onClick={() => setHistoryDate("")}
+                style={{
+                  border: "1px solid #d4cfb5",
+                  background: "#f7f5ef",
+                  color: "#534e41",
+                  borderRadius: 8,
+                  padding: "7px 10px",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                Réinitialiser
+              </button>
+            )}
+          </div>
         </div>
         {displayJobs.map((job) => (
           <div key={job.id} style={{ ...panelStyle, padding: 16 }}>
@@ -1373,9 +1390,7 @@ function PhotoImportView() {
                         {result.processed_photos}/{result.total_photos} photos · {result.codes_found} codes détectés
                       </div>
                       {result.codes.length > 0 && (
-                        <div style={userPhotoResultCodesStyle} title={result.codes.join(", ")}>
-                          {result.codes.join(" · ")}
-                        </div>
+                        <CompactCodeChips codes={result.codes} />
                       )}
                       <div style={userPhotoResultStatsStyle}>
                         <span style={{ color: "#3b7d2a" }}>{result.added} ajoutés</span>
@@ -1407,6 +1422,31 @@ function PhotoImportView() {
   );
 }
 
+function CompactCodeChips({ codes, maxVisible = 6 }: { codes: string[]; maxVisible?: number }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasMore = codes.length > maxVisible;
+  const visibleCodes = expanded ? codes : codes.slice(0, maxVisible);
+  const hiddenCount = hasMore ? codes.length - maxVisible : 0;
+
+  return (
+    <div style={compactCodeListStyle} title={codes.join(", ")}>
+      {visibleCodes.map((code) => (
+        <span key={code} style={compactCodePillStyle}>{code}</span>
+      ))}
+      {hasMore && (
+        <button
+          type="button"
+          onClick={() => setExpanded((current) => !current)}
+          style={compactCodeToggleStyle}
+          aria-label={expanded ? "Masquer les codes" : `Afficher les ${hiddenCount} codes supplémentaires`}
+        >
+          {expanded ? "Masquer" : `+${hiddenCount}`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function AnimatedProcessingLabel({ status }: { status: BulkPhotoJobDto["status"] }) {
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
@@ -1415,239 +1455,6 @@ function AnimatedProcessingLabel({ status }: { status: BulkPhotoJobDto["status"]
         {[0, 1, 2].map((dot) => <span key={dot} style={{ ...processingDotStyle, animationDelay: `${dot * 140}ms` }}>•</span>)}
       </span>
     </span>
-  );
-}
-
-function AdminVideoImportView() {
-  const { token } = useAuth();
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [files, setFiles] = useState<File[]>([]);
-  const [jobs, setJobs] = useState<AdminVideoJobDto[]>([]);
-  const [history, setHistory] = useState<AdminVideoHistoryDto[]>([]);
-  const [historyDate, setHistoryDate] = useState("");
-  const [expandedJobIds, setExpandedJobIds] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(false);
-  const [confirmUpload, setConfirmUpload] = useState(false);
-  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
-  const knownJobStatuses = useRef<Map<string, AdminVideoJobDto["status"]> | null>(null);
-
-  const selectedVideoFolders = Array.from(
-    files.reduce((folders, file) => {
-      const parts = (file.webkitRelativePath || file.name).split("/").filter(Boolean);
-      const folder = parts.length >= 3 ? parts[parts.length - 2] : "Dossier utilisateur";
-      folders.set(folder, (folders.get(folder) ?? 0) + 1);
-      return folders;
-    }, new Map<string, number>()),
-  );
-
-  useEffect(() => {
-    if (!toast) return;
-    const timeout = window.setTimeout(() => setToast(null), 3000);
-    return () => window.clearTimeout(timeout);
-  }, [toast]);
-
-  const loadJobs = async () => {
-    if (!token) return;
-    try {
-      const [nextJobs, completedJobs] = await Promise.all([
-        adminListVideoJobs(token),
-        adminListVideoHistory(token, historyDate || undefined),
-      ]);
-      const previousStatuses = knownJobStatuses.current;
-      if (previousStatuses) {
-        const completedJob = nextJobs.find(
-          (job) => job.status === "completed" && previousStatuses.get(job.id) !== "completed",
-        );
-        if (completedJob) {
-          setToast({ type: "success", message: `Le traitement vidéo de ${completedJob.filename} est terminé.` });
-        }
-      }
-      knownJobStatuses.current = new Map(nextJobs.map((job) => [job.id, job.status]));
-      setJobs(nextJobs);
-      setHistory(completedJobs);
-    } catch {
-      setToast({ type: "error", message: "Impossible de charger les traitements vidéo." });
-    }
-  };
-
-  useEffect(() => {
-    void loadJobs();
-    const timer = window.setInterval(() => void loadJobs(), 5000);
-    return () => window.clearInterval(timer);
-  }, [token, historyDate]);
-
-  const handleFolderSelection = (event: ChangeEvent<HTMLInputElement>) => {
-    setFiles(
-      Array.from(event.target.files ?? []).filter((file) =>
-        /\.(mp4|mov|avi|webm|mkv|m4v)$/i.test(file.name),
-      ),
-    );
-  };
-
-  const chooseFolder = async () => {
-    const picker = (window as Window & { showDirectoryPicker?: () => Promise<any> }).showDirectoryPicker;
-    if (!picker || !window.isSecureContext) {
-      inputRef.current?.click();
-      return;
-    }
-    try {
-      const directory = await picker();
-      const selected: File[] = [];
-      const collect = async (handle: any, path: string): Promise<void> => {
-        for await (const entry of handle.values()) {
-          const entryPath = `${path}/${entry.name}`;
-          if (entry.kind === "directory") await collect(entry, entryPath);
-          else if (entry.kind === "file" && /\.(mp4|mov|avi|webm|mkv|m4v)$/i.test(entry.name)) {
-            const file = await entry.getFile();
-            Object.defineProperty(file, "webkitRelativePath", { configurable: true, value: entryPath });
-            selected.push(file);
-          }
-        }
-      };
-      await collect(directory, directory.name);
-      setFiles(selected);
-      if (!selected.length) setToast({ type: "error", message: "Aucune vidéo supportée trouvée dans ce dossier." });
-    } catch (error) {
-      if (!(error instanceof DOMException && error.name === "AbortError")) {
-        setToast({ type: "error", message: "Impossible de lire le dossier vidéo." });
-      }
-    }
-  };
-
-  const launch = async () => {
-    if (!token || !files.length) return;
-    setConfirmUpload(false);
-    setLoading(true);
-    try {
-      const created = await adminCreateVideoJobs(token, files);
-      setJobs((current) => [...created, ...current]);
-      setFiles([]);
-      setToast({ type: "success", message: `${created.length} traitement(s) vidéo lancé(s).` });
-    } catch (error) {
-      setToast({ type: "error", message: error instanceof Error ? error.message : "Échec du lancement vidéo." });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const toggleJob = (jobId: string) => {
-    setExpandedJobIds((current) => {
-      const next = new Set(current);
-      if (next.has(jobId)) next.delete(jobId);
-      else next.add(jobId);
-      return next;
-    });
-  };
-
-  return (
-    <div>
-      <PageHeader title="Import de vidéos" subtitle="Un sous-dossier vidéo doit porter le nom exact d’un utilisateur existant." />
-      <div style={panelStyle}>
-        <input
-          ref={inputRef}
-          type="file"
-          accept="video/*"
-          multiple
-          {...({ webkitdirectory: "", directory: "" } as object)}
-          style={{ display: "none" }}
-          onChange={handleFolderSelection}
-        />
-        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <PrimaryButton onClick={() => void chooseFolder()}><VideoIcon /> Choisir le dossier parent</PrimaryButton>
-          <span style={{ color: "#6f6a58", fontSize: 13 }}>{files.length ? `${selectedVideoFolders.length} sous-dossier(s) · ${files.length} vidéo(s)` : "Aucune vidéo sélectionnée"}</span>
-        </div>
-        {files.length > 0 && <div style={folderListStyle}>{selectedVideoFolders.map(([folder, count]) => <span key={folder} style={folderChipStyle}>📁 {folder} · {count} vidéo(s)</span>)}</div>}
-        <PrimaryButton onClick={() => setConfirmUpload(true)} disabled={loading || !files.length} style={{ marginTop: 16 }}>
-          {loading ? "Envoi…" : "Lancer le traitement vidéo"}
-        </PrimaryButton>
-      </div>
-      {confirmUpload && <ConfirmDialog
-        title="Lancer le traitement vidéo ?"
-        message={`${files.length} vidéo(s) seront associé(s) à leurs utilisateurs et analysé(s) par code-barres.`}
-        confirmLabel="Envoyer et traiter"
-        onCancel={() => setConfirmUpload(false)}
-        onConfirm={() => void launch()}
-      />}
-      <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 10 }}>
-        <div style={photoHistoryFilterStyle}>
-          <div>
-            <div style={{ fontWeight: 800, color: "#2b2a22" }}>Historique des traitements vidéo</div>
-            <div style={{ color: "#8b8574", fontSize: 12.5, marginTop: 3 }}>Les résultats terminés sont conservés dans la base de données.</div>
-          </div>
-          <input
-            type="date"
-            value={historyDate}
-            onChange={(event) => setHistoryDate(event.target.value)}
-            className="admin-input"
-            style={{ ...inputStyle, width: "auto", minWidth: 170 }}
-            aria-label="Filtrer l'historique vidéo par date d'inventaire"
-          />
-        </div>
-        {jobs.map((job) => (
-          <div key={job.id} style={{ ...panelStyle, padding: 16 }}>
-            <button type="button" onClick={() => toggleJob(job.id)} aria-expanded={expandedJobIds.has(job.id)} style={jobHeaderButtonStyle}>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <strong style={{ display: "flex", alignItems: "center", gap: 8, color: "#2b2a22" }}>
-                  <span style={{ ...jobChevronStyle, transform: expandedJobIds.has(job.id) ? "rotate(90deg)" : "rotate(0deg)" }}>›</span>
-                  {job.username} · {job.filename}
-                </strong>
-                <div style={{ color: "#8b8574", fontSize: 13, marginTop: 5 }}>
-                  {job.status === "completed" ? `${job.result?.codes_found.length ?? 0} code(s) trouvé(s) · ${formatVideoDuration(job)}` : job.progress}
-                </div>
-              </div>
-              <StatusBadge tone={job.status === "completed" ? "success" : job.status === "failed" ? "danger" : "info"}>
-                {job.status === "completed" ? "Terminé" : job.status === "failed" ? "Erreur" : "En cours"}
-              </StatusBadge>
-            </button>
-            {job.status === "completed" && expandedJobIds.has(job.id) && job.result && (
-              <div style={userPhotoResultsStyle}>
-                {job.result.codes_found.map((code) => <div key={code.code} style={userPhotoResultCodesStyle}>{code.code} · {code.frame_hits} détection(s) · {code.added ? "ajouté" : "doublon"}</div>)}
-              </div>
-            )}
-            {expandedJobIds.has(job.id) && job.error && <div style={jobErrorStyle}>{job.error}</div>}
-          </div>
-        ))}
-        {history.map((batch) => (
-          <div key={batch.id} style={{ ...panelStyle, padding: 16 }}>
-            <button type="button" onClick={() => toggleJob(batch.id)} aria-expanded={expandedJobIds.has(batch.id)} style={jobHeaderButtonStyle}>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <strong style={{ display: "flex", alignItems: "center", gap: 8, color: "#2b2a22" }}>
-                  <span style={{ ...jobChevronStyle, transform: expandedJobIds.has(batch.id) ? "rotate(90deg)" : "rotate(0deg)" }}>›</span>
-                  Traitement vidéo · {batch.total_videos} vidéo(s)
-                </strong>
-                <div style={{ color: "#8b8574", fontSize: 13, marginTop: 5 }}>
-                  Inventaire {batch.inventory_date} · {formatVideoHistoryDuration(batch)}
-                </div>
-              </div>
-              <StatusBadge tone="success">Terminé</StatusBadge>
-            </button>
-            {expandedJobIds.has(batch.id) && (
-              <div style={userPhotoResultsStyle}>
-                <div style={userPhotoResultsTitleStyle}>Résultats par utilisateur</div>
-                <div style={userPhotoResultsGridStyle}>
-                  {batch.users.map((userResult) => (
-                    <div key={userResult.user_id} style={userPhotoResultStyle}>
-                      <div style={{ fontWeight: 800, color: "#2b2a22" }}>{userResult.username}</div>
-                      <div style={userPhotoResultMetaStyle}>{userResult.videos} vidéo(s) · {userResult.codes_found.length} code(s) trouvé(s)</div>
-                      <div style={userPhotoResultStatsStyle}>
-                        <span style={{ color: "#3b7d2a" }}>{userResult.total_added} ajoutés</span>
-                        <span style={{ color: "#a15c08" }}>{userResult.total_duplicates} doublons</span>
-                      </div>
-                      {userResult.codes_found.length > 0 && (
-                        <div style={userPhotoResultCodesStyle}>
-                          {userResult.codes_found.map((code) => `${code.code} (${code.frame_hits})`).join(" · ")}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-      {toast && <AdminToast toast={toast} onClose={() => setToast(null)} />}
-    </div>
   );
 }
 
@@ -1662,27 +1469,6 @@ function formatJobDuration(job: BulkPhotoJobDto): string {
   if (hours > 0) return `Durée ${hours} h ${minutes} min`;
   if (minutes > 0) return `Durée ${minutes} min ${seconds} s`;
   return `Durée ${seconds} s`;
-}
-
-function formatVideoDuration(job: AdminVideoJobDto): string {
-  const seconds = Math.max(
-    0,
-    Math.round(
-      job.result?.processing_time_ms
-        ? job.result.processing_time_ms / 1000
-        : (job.finished_at ?? Date.now() / 1000) - (job.started_at ?? job.created_at),
-    ),
-  );
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
-  return minutes > 0 ? `Durée ${minutes} min ${remainingSeconds} s` : `Durée ${remainingSeconds} s`;
-}
-
-function formatVideoHistoryDuration(batch: AdminVideoHistoryDto): string {
-  const seconds = Math.max(0, Math.round(batch.finished_at - batch.created_at));
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
-  return minutes > 0 ? `Durée ${minutes} min ${remainingSeconds} s` : `Durée ${remainingSeconds} s`;
 }
 
 function AdminToast({
@@ -3024,13 +2810,51 @@ const userPhotoResultMetaStyle: CSSProperties = {
   marginTop: 5,
 };
 
+const compactCodeListStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 6,
+  marginTop: 8,
+  alignItems: "center",
+};
+
 const userPhotoResultCodesStyle: CSSProperties = {
-  marginTop: 7,
+  ...compactCodeListStyle,
   color: "#59543f",
   fontFamily: "ui-monospace, monospace",
   fontSize: 11.5,
   lineHeight: 1.5,
   overflowWrap: "anywhere",
+};
+
+const compactCodePillStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  padding: "4px 8px",
+  borderRadius: 999,
+  background: "#e9f7ef",
+  border: "1px solid #bddfc8",
+  color: "#245b34",
+  fontFamily: "ui-monospace, monospace",
+  fontSize: 10.5,
+  fontWeight: 700,
+  lineHeight: 1.2,
+  overflowWrap: "anywhere",
+};
+
+const compactCodeToggleStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  minWidth: 42,
+  padding: "4px 8px",
+  borderRadius: 999,
+  background: "#f2efe4",
+  border: "1px solid #ddd7c3",
+  color: "#5d564c",
+  fontSize: 10.5,
+  fontWeight: 800,
+  cursor: "pointer",
 };
 
 const userPhotoResultStatsStyle: CSSProperties = {

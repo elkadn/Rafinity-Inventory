@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import shutil
 import time
@@ -27,8 +28,9 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 BULK_JOB_ROOT = os.path.join(PROJECT_ROOT, "photo_jobs")
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 MAX_PHOTOS = 10000
+MAX_PHOTOS_PER_JOB = 1000
 MAX_PHOTO_SIZE_BYTES = 25 * 1024 * 1024
-PHOTO_WORKERS = 4
+PHOTO_WORKERS = max(4, min(8, os.cpu_count() or 4))
 JOB_CHECKPOINT_INTERVAL = 100
 
 
@@ -135,6 +137,7 @@ async def _run_job(job: dict, job_dir: str) -> None:
     job["progress"] = "Traitement des photos…"
     _write_job(job)
     try:
+        batch_timing: list[dict] = []
         user_results = {
             result["user_id"]: result for result in job.get("user_results", [])
         }
@@ -146,109 +149,148 @@ async def _run_job(job: dict, job_dir: str) -> None:
                 item["stored_name"] for item in job["files"][: job["processed_photos"]]
             )
         job["processed_files"] = list(processed_files)
+
+        def split_batches(items: list[dict]) -> list[list[dict]]:
+            return [
+                items[index : index + MAX_PHOTOS_PER_JOB]
+                for index in range(0, len(items), MAX_PHOTOS_PER_JOB)
+            ]
+
         pending_items = [
             item for item in job["files"] if item["stored_name"] not in processed_files
         ]
-        queue: asyncio.Queue[dict] = asyncio.Queue()
-        for item in pending_items:
-            queue.put_nowait(item)
-        state_lock = asyncio.Lock()
-        checkpoint_counter = 0
+        batches = split_batches(pending_items)
+        for batch_index, batch_items in enumerate(batches, start=1):
+            batch_started = time.time()
+            queue: asyncio.Queue[dict] = asyncio.Queue()
+            for item in batch_items:
+                queue.put_nowait(item)
+            state_lock = asyncio.Lock()
+            checkpoint_counter = 0
 
-        async def mark_skipped(item: dict) -> None:
-            nonlocal checkpoint_counter
-            async with state_lock:
-                job["skipped"] += 1
-                user_result = user_results.get(item["user_id"])
-                if user_result:
-                    user_result["skipped"] += 1
-                    user_result["processed_photos"] += 1
-                processed_files.add(item["stored_name"])
-                job["processed_files"] = list(processed_files)
-                job["processed_photos"] = len(processed_files)
-                job["progress"] = (
-                    f"{job['processed_photos']} / {job['total_photos']} photos"
-                )
-                checkpoint_counter += 1
-                if checkpoint_counter >= JOB_CHECKPOINT_INTERVAL:
-                    _write_job(job)
-                    checkpoint_counter = 0
-
-        async def process_item(item: dict) -> None:
-            nonlocal checkpoint_counter
-            try:
-                codes = await asyncio.to_thread(
-                    _decode_photo, os.path.join(job_dir, item["stored_name"])
-                )
-            except Exception:
-                logger.exception("Unable to decode photo %s", item["stored_name"])
-                await mark_skipped(item)
-                return
-
-            added = 0
-            duplicates = 0
-            try:
-                for code in codes:
-                    result = await register_code_for_user(
-                        user_id=item["user_id"],
-                        username=item["username"],
-                        code=code,
-                        method="barcode",
-                        inventory_date=job["inventory_date"],
+            async def mark_skipped(item: dict) -> None:
+                nonlocal checkpoint_counter
+                async with state_lock:
+                    job["skipped"] += 1
+                    user_result = user_results.get(item["user_id"])
+                    if user_result:
+                        user_result["skipped"] += 1
+                        user_result["processed_photos"] += 1
+                    processed_files.add(item["stored_name"])
+                    job["processed_files"] = list(processed_files)
+                    job["processed_photos"] = len(processed_files)
+                    job["progress"] = (
+                        f"{job['processed_photos']} / {job['total_photos']} photos"
                     )
-                    if result.added:
-                        added += 1
-                    else:
-                        duplicates += 1
-            except Exception:
-                logger.exception(
-                    "Unable to register codes from %s", item["stored_name"]
-                )
-                await mark_skipped(item)
-                return
+                    checkpoint_counter += 1
+                    if checkpoint_counter >= JOB_CHECKPOINT_INTERVAL:
+                        _write_job(job)
+                        checkpoint_counter = 0
 
-            async with state_lock:
-                user_result = user_results.get(item["user_id"])
-                job["codes_found"] += len(codes)
-                job["added"] += added
-                job["duplicates"] += duplicates
-                if user_result:
-                    user_result["processed_photos"] += 1
-                    user_result["codes_found"] += len(codes)
-                    user_result["added"] += added
-                    user_result["duplicates"] += duplicates
-                    for code in codes:
-                        if code not in user_result["codes"]:
-                            user_result["codes"].append(code)
-                processed_files.add(item["stored_name"])
-                job["processed_files"] = list(processed_files)
-                job["processed_photos"] = len(processed_files)
-                job["progress"] = (
-                    f"{job['processed_photos']} / {job['total_photos']} photos"
-                )
-                checkpoint_counter += 1
-                if checkpoint_counter >= JOB_CHECKPOINT_INTERVAL:
-                    _write_job(job)
-                    checkpoint_counter = 0
-
-        async def worker() -> None:
-            while True:
+            async def process_item(item: dict) -> None:
+                nonlocal checkpoint_counter
                 try:
-                    item = queue.get_nowait()
-                except asyncio.QueueEmpty:
+                    codes = await asyncio.to_thread(
+                        _decode_photo, os.path.join(job_dir, item["stored_name"])
+                    )
+                except Exception:
+                    logger.exception("Unable to decode photo %s", item["stored_name"])
+                    await mark_skipped(item)
                     return
+
+                added = 0
+                duplicates = 0
                 try:
-                    await process_item(item)
+                    for code in codes:
+                        result = await register_code_for_user(
+                            user_id=item["user_id"],
+                            username=item["username"],
+                            code=code,
+                            method="barcode",
+                            inventory_date=job["inventory_date"],
+                        )
+                        if result.added:
+                            added += 1
+                        else:
+                            duplicates += 1
                 except Exception:
                     logger.exception(
-                        "Unexpected error processing %s", item["stored_name"]
+                        "Unable to register codes from %s", item["stored_name"]
                     )
                     await mark_skipped(item)
-                finally:
-                    queue.task_done()
+                    return
 
-        await asyncio.gather(*(worker() for _ in range(PHOTO_WORKERS)))
-        _write_job(job)
+                async with state_lock:
+                    user_result = user_results.get(item["user_id"])
+                    job["codes_found"] += len(codes)
+                    job["added"] += added
+                    job["duplicates"] += duplicates
+                    if user_result:
+                        user_result["processed_photos"] += 1
+                        user_result["codes_found"] += len(codes)
+                        user_result["added"] += added
+                        user_result["duplicates"] += duplicates
+                        for code in codes:
+                            if code not in user_result["codes"]:
+                                user_result["codes"].append(code)
+                    processed_files.add(item["stored_name"])
+                    job["processed_files"] = list(processed_files)
+                    job["processed_photos"] = len(processed_files)
+                    job["progress"] = (
+                        f"{job['processed_photos']} / {job['total_photos']} photos"
+                    )
+                    checkpoint_counter += 1
+                    if checkpoint_counter >= JOB_CHECKPOINT_INTERVAL:
+                        _write_job(job)
+                        checkpoint_counter = 0
+
+            async def worker() -> None:
+                while True:
+                    try:
+                        item = queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        return
+                    try:
+                        await process_item(item)
+                    except Exception:
+                        logger.exception(
+                            "Unexpected error processing %s", item["stored_name"]
+                        )
+                        await mark_skipped(item)
+                    finally:
+                        queue.task_done()
+
+            await asyncio.gather(*(worker() for _ in range(PHOTO_WORKERS)))
+            batch_elapsed = time.time() - batch_started
+            batch_timing.append(
+                {
+                    "batch": batch_index,
+                    "count": len(batch_items),
+                    "elapsed_seconds": round(batch_elapsed, 2),
+                    "processed_photos": job["processed_photos"],
+                    "codes_found": job["codes_found"],
+                    "added": job["added"],
+                }
+            )
+            logger.info(
+                "Photo batch %s/%s finished in %.2fs for %s images; total processed=%s; codes_found=%s; added=%s",
+                batch_index,
+                len(batches),
+                batch_elapsed,
+                len(batch_items),
+                job["processed_photos"],
+                job["codes_found"],
+                job["added"],
+            )
+            _write_job(job)
+            if batch_index < len(batches):
+                job["progress"] = (
+                    f"Lot {batch_index} / {len(batches)} · "
+                    f"{job['processed_photos']} / {job['total_photos']} photos"
+                )
+                _write_job(job)
+
+        job["batch_timing"] = batch_timing
         job["status"] = "completed"
         job["progress"] = "Traitement terminé"
         job["finished_at"] = time.time()
@@ -361,6 +403,15 @@ async def create_photo_job(
     except Exception:
         shutil.rmtree(job_dir, ignore_errors=True)
         raise
+
+    total_batches = max(1, math.ceil(len(job_files) / MAX_PHOTOS_PER_JOB))
+    if total_batches > 1:
+        logger.info(
+            "Photo import %s split into %s batches of max %s images each.",
+            job_id,
+            total_batches,
+            MAX_PHOTOS_PER_JOB,
+        )
 
     user_results: list[dict] = []
     results_by_user: dict[str, dict] = {}
