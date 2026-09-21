@@ -134,6 +134,7 @@ Architecture (unchanged from v3):
 3. blob_count == 1 → OCR that region.
 4. blob_count == 0 → OCR the whole crop (fallback).
 """
+
 from __future__ import annotations
 
 import io
@@ -162,6 +163,7 @@ def _get_reader():
     if _reader is None:
         try:
             import easyocr
+
             logger.info("Loading EasyOCR model (first call, ~3s)…")
             _reader = easyocr.Reader(["en"], gpu=False)
             logger.info("EasyOCR ready.")
@@ -259,7 +261,7 @@ def _ocr_easyocr(
                 logger.debug("EasyOCR early exit at angle %s: %s", angle, top_value)
                 break
 
-    return candidates
+    return list(dict.fromkeys(candidates))
 
 
 def _codes_match_with_08(a: str, b: str) -> bool:
@@ -285,17 +287,21 @@ def _confirm_code_from_top_bottom(
     top = gray[:top_h, :]
     bottom = gray[bot_y:, :]
 
-    top_codes = list(dict.fromkeys(
-        _ocr_easyocr(
-            top,
-            settings,
-            allowlist="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-",
-            quick=quick,
-        ),
-    ))
-    bottom_codes = list(dict.fromkeys(
-        _ocr_easyocr(bottom, settings, allowlist="0123456789", quick=quick),
-    ))
+    top_codes = list(
+        dict.fromkeys(
+            _ocr_easyocr(
+                top,
+                settings,
+                allowlist="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-",
+                quick=quick,
+            ),
+        )
+    )
+    bottom_codes = list(
+        dict.fromkeys(
+            _ocr_easyocr(bottom, settings, allowlist="0123456789", quick=quick),
+        )
+    )
 
     if not top_codes or not bottom_codes:
         return None, None
@@ -319,7 +325,9 @@ def _confirm_code_from_top_bottom(
     return None, None
 
 
-def _ocr_tesseract(gray: np.ndarray, settings: Settings, quick: bool = False) -> List[str]:
+def _ocr_tesseract(
+    gray: np.ndarray, settings: Settings, quick: bool = False
+) -> List[str]:
     """Tesseract fallback (used if EasyOCR is not installed)."""
     import pytesseract
 

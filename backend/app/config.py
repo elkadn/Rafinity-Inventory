@@ -3,7 +3,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 
 
@@ -11,13 +10,16 @@ class Settings:
     APP_NAME = "Ticket Scanner API"
     APP_VERSION = "2.0.0"
 
-    # CORS: with Caddy fronting both frontend + backend under one HTTPS
-    # origin (see /caddy/Caddyfile), this often isn't even needed in
-    # production - but kept for local dev where the frontend runs on a
-    # different port than the backend.
-    ALLOWED_ORIGINS = os.environ.get(
-        "ALLOWED_ORIGINS",
-    ).split(",")
+    # Explicit CORS list to support local Vite dev and the LAN HTTPS frontend
+    # while keeping the API locked to known origins instead of a wildcard.
+    ALLOWED_ORIGINS = [
+        origin.strip()
+        for origin in os.environ.get(
+            "ALLOWED_ORIGINS",
+            "https://localhost:5173,https://10.1.1.77:5173",
+        ).split(",")
+        if origin.strip()
+    ]
 
     # ---- Oracle ----
     ORACLE_USER = os.environ.get("ORACLE_USER")

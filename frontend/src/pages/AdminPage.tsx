@@ -98,17 +98,26 @@ export default function AdminPage() {
     <div style={shellStyle}>
       <style>{`
         * { box-sizing: border-box; }
+        .admin-content {
+          font-size: 15px;
+          color: #2b2a22;
+          line-height: 1.5;
+        }
+        .admin-content * {
+          -webkit-font-smoothing: antialiased;
+          text-rendering: optimizeLegibility;
+        }
         .admin-nav-btn { transition: background 0.15s ease, color 0.15s ease; }
         .admin-nav-btn:hover:not(.active) { background: rgba(189, 177, 132, 0.08); }
         .admin-nav-btn.active { background: rgba(189, 177, 132, 0.14); }
-        .admin-row-btn:hover { border-color: rgba(189, 177, 132, 0.4) !important; box-shadow: 0 4px 14px rgba(80, 74, 45, 0.08); }
+        .admin-row-btn:hover { border-color: rgba(189, 177, 132, 0.45) !important; box-shadow: 0 6px 18px rgba(80, 74, 45, 0.08); }
         .admin-primary-btn:hover { filter: brightness(0.96); }
         .admin-ghost-btn:hover { background: rgba(189, 177, 132, 0.10) !important; }
         .admin-logout-btn:hover { background: rgba(192, 86, 79, 0.12) !important; border-color: rgba(192, 86, 79, 0.35) !important; }
         @keyframes admin-progress-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
         @keyframes admin-processing-dot { 0%, 60%, 100% { opacity: .25; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
         @keyframes admin-toast-in { from { opacity: 0; transform: translate(-50%, -12px); } to { opacity: 1; transform: translate(-50%, 0); } }
-        .admin-users-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+        .admin-users-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
         .admin-input:focus, .admin-select:focus {
           border-color: #bdb184 !important;
           box-shadow: 0 0 0 3px rgba(189, 177, 132, 0.16) !important;
@@ -1345,8 +1354,19 @@ function PhotoImportView() {
             )}
           </div>
         </div>
-        {displayJobs.map((job) => (
-          <div key={job.id} style={{ ...panelStyle, padding: 16 }}>
+        {displayJobs.map((job) => {
+          const isActiveJob = job.status === "queued" || job.status === "processing";
+          return (
+            <div
+              key={job.id}
+              style={{
+                ...panelStyle,
+                padding: 16,
+                background: isActiveJob ? "#edf9ee" : "#ffffff",
+                borderColor: isActiveJob ? "#bfdcc2" : "#eeece0",
+                boxShadow: isActiveJob ? "0 0 0 1px rgba(85, 146, 93, 0.08)" : "0 1px 0 rgba(43, 42, 34, 0.02)",
+              }}
+            >
             <button
               type="button"
               onClick={() => toggleJob(job.id)}
@@ -1404,7 +1424,8 @@ function PhotoImportView() {
             )}
             {job.status === "failed" && job.error && expandedJobIds.has(job.id) && <div style={jobErrorStyle}>{job.error}</div>}
           </div>
-        ))}
+          );
+        })}
       </div>
       {toast && (
         <AdminToast toast={toast} onClose={() => setToast(null)} />
@@ -2145,14 +2166,14 @@ function PageHeader({
   noMargin?: boolean;
 }) {
   return (
-    <div style={{ marginBottom: noMargin ? 0 : 22 }}>
+    <div style={{ marginBottom: noMargin ? 0 : 24 }}>
       <h1
-        style={{ fontSize: 20, fontWeight: 800, color: "#2b2a22", margin: 0 }}
+        style={{ fontSize: 28, fontWeight: 800, color: "#2b2a22", margin: 0, letterSpacing: "-0.03em" }}
       >
         {title}
       </h1>
       {subtitle && (
-        <p style={{ fontSize: 13.5, color: "#9a927a", margin: "4px 0 0" }}>
+        <p style={{ fontSize: 14.5, color: "#8b8574", margin: "6px 0 0", lineHeight: 1.5 }}>
           {subtitle}
         </p>
       )}
@@ -2481,8 +2502,8 @@ const navBtnStyle: CSSProperties = {
   background: "none",
   border: "none",
   borderRadius: "0 10px 10px 0",
-  padding: "10px 12px",
-  fontSize: 13.5,
+  padding: "11px 12px",
+  fontSize: 14.5,
   cursor: "pointer",
   position: "relative",
 };
@@ -2636,7 +2657,7 @@ const cardBtnStyle: CSSProperties = {
   background: "#ffffff",
   border: "1px solid #eeece0",
   borderRadius: 14,
-  padding: "16px 18px",
+  padding: "18px 20px",
   cursor: "pointer",
   transition: "border-color 0.15s ease, box-shadow 0.15s ease",
 };
@@ -2675,7 +2696,7 @@ const tableWrapStyle: CSSProperties = {
 const tableHeadStyle: CSSProperties = {
   display: "flex",
   padding: "12px 18px",
-  fontSize: 11.5,
+  fontSize: 12.5,
   color: "#9a927a",
   fontWeight: 700,
   textTransform: "uppercase",
@@ -2704,7 +2725,8 @@ const panelStyle: CSSProperties = {
   background: "#ffffff",
   border: "1px solid #eeece0",
   borderRadius: 16,
-  padding: 22,
+  padding: 24,
+  boxShadow: "0 1px 0 rgba(43, 42, 34, 0.02)",
 };
 
 const photoSelectionStyle: CSSProperties = {
@@ -3012,13 +3034,14 @@ const formGridStyle: CSSProperties = {
 
 const inputStyle: CSSProperties = {
   width: "100%",
-  fontSize: 14,
-  padding: "10px 12px",
+  fontSize: 15,
+  padding: "11px 12px",
   borderRadius: 10,
   border: "1.5px solid #e9e6d8",
   background: "#faf9f4",
   outline: "none",
   transition: "border-color 0.15s ease, box-shadow 0.15s ease",
+  color: "#2b2a22",
 };
 
 const feedbackStyle: CSSProperties = {
@@ -3057,9 +3080,9 @@ const primaryBtnStyle: CSSProperties = {
   color: "#2b2a22",
   border: "none",
   borderRadius: 10,
-  padding: "10px 16px",
-  fontSize: 13.5,
-  fontWeight: 700,
+  padding: "11px 17px",
+  fontSize: 14,
+  fontWeight: 800,
   cursor: "pointer",
   boxShadow: "0 6px 16px rgba(189, 177, 132, 0.3)",
   whiteSpace: "nowrap",

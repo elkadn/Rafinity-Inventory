@@ -80,6 +80,33 @@ def _write_job(job: dict) -> None:
     os.replace(temporary_path, _job_path(job["id"]))
 
 
+def _timings_path(job_id: str) -> str:
+    return os.path.join(BULK_JOB_ROOT, f"{job_id}.timings.json")
+
+
+def _write_timing_report(job: dict) -> None:
+    _ensure_dir(BULK_JOB_ROOT)
+    report = {
+        "job_id": job["id"],
+        "status": job.get("status"),
+        "inventory_date": job.get("inventory_date"),
+        "created_at": job.get("created_at"),
+        "started_at": job.get("started_at"),
+        "finished_at": job.get("finished_at"),
+        "total_photos": job.get("total_photos"),
+        "processed_photos": job.get("processed_photos"),
+        "codes_found": job.get("codes_found"),
+        "added": job.get("added"),
+        "duplicates": job.get("duplicates"),
+        "skipped": job.get("skipped"),
+        "summary": job.get("timing", {}).get("summary", {}),
+        "batches": job.get("timing", {}).get("batches", []),
+        "events": job.get("timing", {}).get("events", []),
+    }
+    with open(_timings_path(job["id"]), "w", encoding="utf-8") as handle:
+        json.dump(report, handle, indent=2, sort_keys=True)
+
+
 def _read_job(job_id: str) -> dict | None:
     try:
         with open(_job_path(job_id), encoding="utf-8") as handle:
@@ -132,10 +159,33 @@ def _decode_photo(path: str) -> set[str]:
 
 
 async def _run_job(job: dict, job_dir: str) -> None:
+    start_time = time.time()
+    job.setdefault(
+        "timing",
+        {
+            "summary": {
+                "decode_seconds": 0.0,
+                "db_write_seconds": 0.0,
+                "batch_seconds": 0.0,
+                "total_seconds": 0.0,
+                "processed_images": 0,
+            },
+            "batches": [],
+            "events": [],
+        },
+    )
+    logger.info(
+        "Starting photo job %s: %s images, inventory=%s, users=%s",
+        job["id"],
+        job["total_photos"],
+        job["inventory_date"],
+        len(job.get("user_results", [])),
+    )
     job["status"] = "processing"
-    job["started_at"] = time.time()
+    job["started_at"] = start_time
     job["progress"] = "Traitement des photos…"
     _write_job(job)
+    _write_timing_report(job)
     try:
         batch_timing: list[dict] = []
         user_results = {
@@ -160,8 +210,21 @@ async def _run_job(job: dict, job_dir: str) -> None:
             item for item in job["files"] if item["stored_name"] not in processed_files
         ]
         batches = split_batches(pending_items)
+        logger.info(
+            "Photo job %s has %s batches to process (max %s images per batch).",
+            job["id"],
+            len(batches),
+            MAX_PHOTOS_PER_JOB,
+        )
         for batch_index, batch_items in enumerate(batches, start=1):
             batch_started = time.time()
+            logger.info(
+                "Photo job %s starting batch %s/%s (%s images)",
+                job["id"],
+                batch_index,
+                len(batches),
+                len(batch_items),
+            )
             queue: asyncio.Queue[dict] = asyncio.Queue()
             for item in batch_items:
                 queue.put_nowait(item)
@@ -189,6 +252,7 @@ async def _run_job(job: dict, job_dir: str) -> None:
 
             async def process_item(item: dict) -> None:
                 nonlocal checkpoint_counter
+                decode_started = time.time()
                 try:
                     codes = await asyncio.to_thread(
                         _decode_photo, os.path.join(job_dir, item["stored_name"])
@@ -197,9 +261,11 @@ async def _run_job(job: dict, job_dir: str) -> None:
                     logger.exception("Unable to decode photo %s", item["stored_name"])
                     await mark_skipped(item)
                     return
+                decode_elapsed = time.time() - decode_started
 
                 added = 0
                 duplicates = 0
+                db_started = time.time()
                 try:
                     for code in codes:
                         result = await register_code_for_user(
@@ -219,6 +285,7 @@ async def _run_job(job: dict, job_dir: str) -> None:
                     )
                     await mark_skipped(item)
                     return
+                db_elapsed = time.time() - db_started
 
                 async with state_lock:
                     user_result = user_results.get(item["user_id"])
@@ -239,9 +306,23 @@ async def _run_job(job: dict, job_dir: str) -> None:
                     job["progress"] = (
                         f"{job['processed_photos']} / {job['total_photos']} photos"
                     )
+                    job["timing"]["summary"]["decode_seconds"] += decode_elapsed
+                    job["timing"]["summary"]["db_write_seconds"] += db_elapsed
+                    job["timing"]["summary"]["processed_images"] += 1
+                    job["timing"]["events"].append(
+                        {
+                            "image": item["stored_name"],
+                            "user_id": item["user_id"],
+                            "codes_detected": len(codes),
+                            "decode_seconds": round(decode_elapsed, 4),
+                            "db_write_seconds": round(db_elapsed, 4),
+                            "total_seconds": round(decode_elapsed + db_elapsed, 4),
+                        }
+                    )
                     checkpoint_counter += 1
                     if checkpoint_counter >= JOB_CHECKPOINT_INTERVAL:
                         _write_job(job)
+                        _write_timing_report(job)
                         checkpoint_counter = 0
 
             async def worker() -> None:
@@ -262,16 +343,21 @@ async def _run_job(job: dict, job_dir: str) -> None:
 
             await asyncio.gather(*(worker() for _ in range(PHOTO_WORKERS)))
             batch_elapsed = time.time() - batch_started
-            batch_timing.append(
-                {
-                    "batch": batch_index,
-                    "count": len(batch_items),
-                    "elapsed_seconds": round(batch_elapsed, 2),
-                    "processed_photos": job["processed_photos"],
-                    "codes_found": job["codes_found"],
-                    "added": job["added"],
-                }
-            )
+            batch_summary = {
+                "batch": batch_index,
+                "count": len(batch_items),
+                "elapsed_seconds": round(batch_elapsed, 2),
+                "processed_photos": job["processed_photos"],
+                "codes_found": job["codes_found"],
+                "added": job["added"],
+                "decode_seconds": round(job["timing"]["summary"]["decode_seconds"], 4),
+                "db_write_seconds": round(
+                    job["timing"]["summary"]["db_write_seconds"], 4
+                ),
+            }
+            batch_timing.append(batch_summary)
+            job["timing"]["batches"].append(batch_summary)
+            job["timing"]["summary"]["batch_seconds"] += batch_elapsed
             logger.info(
                 "Photo batch %s/%s finished in %.2fs for %s images; total processed=%s; codes_found=%s; added=%s",
                 batch_index,
@@ -283,6 +369,7 @@ async def _run_job(job: dict, job_dir: str) -> None:
                 job["added"],
             )
             _write_job(job)
+            _write_timing_report(job)
             if batch_index < len(batches):
                 job["progress"] = (
                     f"Lot {batch_index} / {len(batches)} · "
@@ -294,6 +381,29 @@ async def _run_job(job: dict, job_dir: str) -> None:
         job["status"] = "completed"
         job["progress"] = "Traitement terminé"
         job["finished_at"] = time.time()
+        job["timing"]["summary"]["total_seconds"] = round(
+            job["finished_at"] - start_time, 4
+        )
+        elapsed_total = round(job["finished_at"] - start_time, 2)
+        logger.info(
+            "Photo job %s completed in %.2fs: processed=%s, codes_found=%s, added=%s, duplicates=%s, skipped=%s",
+            job["id"],
+            elapsed_total,
+            job["processed_photos"],
+            job["codes_found"],
+            job["added"],
+            job["duplicates"],
+            job["skipped"],
+        )
+        logger.info(
+            "Timing summary for job %s: decode=%.2fs, db_write=%.2fs, batch_total=%.2fs, total=%.2fs",
+            job["id"],
+            job["timing"]["summary"]["decode_seconds"],
+            job["timing"]["summary"]["db_write_seconds"],
+            job["timing"]["summary"]["batch_seconds"],
+            job["timing"]["summary"]["total_seconds"],
+        )
+        _write_timing_report(job)
         await _persist_completed_job(job)
     except Exception as error:
         logger.exception("Bulk photo job %s failed", job["id"])
@@ -301,6 +411,12 @@ async def _run_job(job: dict, job_dir: str) -> None:
         job["progress"] = "Traitement interrompu"
         job["finished_at"] = time.time()
         job["error"] = str(error)
+        logger.error(
+            "Photo job %s failed after %.2fs: %s",
+            job["id"],
+            round(job["finished_at"] - start_time, 2),
+            job["error"],
+        )
     finally:
         shutil.rmtree(job_dir, ignore_errors=True)
         if job["status"] == "completed":
@@ -316,20 +432,22 @@ async def resume_pending_jobs() -> None:
         if not filename.endswith(".json"):
             continue
         job = _read_job(filename[:-5])
-        job_dir = os.path.join(BULK_JOB_ROOT, job["id"]) if job else ""
-        if job and job.get("status") == "completed":
-            _delete_job_file(job["id"])
+        if not isinstance(job, dict) or "id" not in job:
+            logger.warning(
+                "Skipping malformed photo job file without valid id: %s", filename
+            )
             continue
-        if job and job.get("status") in {"queued", "processing"}:
-            existing_history = await get_db().photo_jobs.find_one({"_id": job["id"]})
+        job_id = job["id"]
+        job_dir = os.path.join(BULK_JOB_ROOT, job_id)
+        if job.get("status") == "completed":
+            _delete_job_file(job_id)
+            continue
+        if job.get("status") in {"queued", "processing"}:
+            existing_history = await get_db().photo_jobs.find_one({"_id": job_id})
             if existing_history:
-                _delete_job_file(job["id"])
+                _delete_job_file(job_id)
                 continue
-        if (
-            job
-            and job.get("status") in {"queued", "processing"}
-            and os.path.isdir(job_dir)
-        ):
+        if job.get("status") in {"queued", "processing"} and os.path.isdir(job_dir):
             asyncio.create_task(_run_job(job, job_dir))
 
 
@@ -453,6 +571,24 @@ async def create_photo_job(
         "files": job_files,
     }
     _write_job(job)
+    job["timing"] = {
+        "summary": {
+            "decode_seconds": 0.0,
+            "db_write_seconds": 0.0,
+            "batch_seconds": 0.0,
+            "total_seconds": 0.0,
+            "processed_images": 0,
+        },
+        "batches": [],
+        "events": [],
+    }
+    _write_timing_report(job)
+    logger.info(
+        "Queued photo job %s for %s images (inventory=%s)",
+        job_id,
+        len(job_files),
+        job["inventory_date"],
+    )
     asyncio.create_task(_run_job(job, job_dir))
     return _public_job(job)
 
@@ -555,13 +691,19 @@ async def list_photo_jobs(
     _ensure_dir(BULK_JOB_ROOT)
     jobs = []
     for filename in os.listdir(BULK_JOB_ROOT):
-        if filename.endswith(".json"):
-            job = _read_job(filename[:-5])
-            if job and job.get("status") == "completed":
-                _delete_job_file(job["id"])
-                continue
-            if job and job.get("admin_id") == admin.id:
-                jobs.append(_public_job(job))
+        if not filename.endswith(".json"):
+            continue
+        job = _read_job(filename[:-5])
+        if not isinstance(job, dict) or "id" not in job:
+            logger.warning(
+                "Skipping malformed photo job file without valid id: %s", filename
+            )
+            continue
+        if job.get("status") == "completed":
+            _delete_job_file(job["id"])
+            continue
+        if job.get("admin_id") == admin.id:
+            jobs.append(_public_job(job))
     return sorted(jobs, key=lambda job: job.created_at, reverse=True)[:50]
 
 

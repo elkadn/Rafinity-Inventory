@@ -293,6 +293,22 @@ avant "rapprochez-vous"/OCR de secours) et `backend/app/config.py`
 (tolérance de rotation OCR).
 
 
+## Accès Database 
+
+docker compose exec oracle bash
+sqlplus inventory_user/elkadn@XEPDB1 
+
+select * from app_users;
+select * from app_scans;
+select * from app_config;
+select * from app_deletions;
+select * from app_photo_jobs;
+select * from app_photo_job_users;
+select * from app_photo_job_codes;
+
+
+truncate table;
+
 
 docker run -d \
   --name oracle-xe \
@@ -314,3 +330,19 @@ GRANT UNLIMITED TABLESPACE TO inventory_user;
 
   docker logs -f oracle-xe
 
+
+
+
+## Install certif 
+choco install mkcert -y
+
+cd C:\ticket-scanner
+
+New-Item -ItemType Directory -Force frontend\certs
+
+mkcert -install
+
+mkcert `
+  -cert-file frontend\certs\server.pem `
+  -key-file frontend\certs\server-key.pem `
+  localhost 127.0.0.1 10.1.1.77

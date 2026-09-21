@@ -547,11 +547,28 @@ def _is_probably_barcode_photo(gray: np.ndarray) -> bool:
     if gray.dtype != np.uint8:
         gray = gray.astype(np.uint8)
 
-    if float(gray.std()) < 10.0:
+    h, w = gray.shape[:2]
+    if h < 16 or w < 16:
+        return False
+
+    std_dev = float(gray.std())
+    if std_dev < 12.0:
+        return False
+
+    min_value = float(gray.min())
+    max_value = float(gray.max())
+    if max_value - min_value < 18.0:
+        return False
+
+    if gray.mean() < 20.0 or gray.mean() > 240.0:
         return False
 
     edges = cv2.Canny(gray, 50, 150)
-    return bool(cv2.countNonZero(edges))
+    edge_ratio = cv2.countNonZero(edges) / max(1, edges.size)
+    if edge_ratio < 0.0015:
+        return False
+
+    return True
 
 
 def _decode_frame(gray: np.ndarray) -> Set[str]:
@@ -567,6 +584,7 @@ def _decode_frame(gray: np.ndarray) -> Set[str]:
     if not _is_probably_barcode_photo(gray):
         return set()
 
+    clahe = cv2.createCLAHE(2.0, (8, 8))
     code_occurrences: dict[str, list[dict]] = {}
 
     def record_codes(
@@ -599,7 +617,7 @@ def _decode_frame(gray: np.ndarray) -> Set[str]:
             record_codes(full_codes, "full", 0, 0, w, h, f"full_{angle}")
             continue
 
-        clahe_full = cv2.createCLAHE(2.0, (8, 8)).apply(oriented)
+        clahe_full = clahe.apply(oriented)
         clahe_codes = _decode_image(clahe_full)
         if clahe_codes:
             record_codes(clahe_codes, "full", 0, 0, w, h, f"full_{angle}_clahe")
@@ -638,8 +656,8 @@ def _decode_frame(gray: np.ndarray) -> Set[str]:
                         )
                         tile_found = True
                     else:
-                        clahe = cv2.createCLAHE(2.0, (8, 8)).apply(up)
-                        clahe_codes = _decode_image(clahe)
+                        clahe_patch = clahe.apply(up)
+                        clahe_codes = _decode_image(clahe_patch)
                         if clahe_codes:
                             record_codes(
                                 clahe_codes,
