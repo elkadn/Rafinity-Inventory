@@ -247,6 +247,17 @@ export async function adminUpdateUser(
   return handle(res);
 }
 
+export interface UnreadPhotoFolderDto {
+  folder_key: string;
+  job_id: string;
+  folder_name: string;
+  inventory_date: string;
+  user_id: string;
+  username: string;
+  file_count: number;
+  files: string[];
+}
+
 export interface UserPhotoResultDto {
   user_id: string;
   username: string;
@@ -257,6 +268,7 @@ export interface UserPhotoResultDto {
   duplicates: number;
   skipped: number;
   codes: string[];
+  unread_folders: UnreadPhotoFolderDto[];
 }
 
 export interface BulkPhotoJobDto {
@@ -274,7 +286,19 @@ export interface BulkPhotoJobDto {
   skipped: number;
   inventory_date: string;
   error: string | null;
+  unread_images: { job_id: string; folder_key: string; folder_name: string; user_id: string; username: string; file_name: string; inventory_date: string; created_at: number }[];
   user_results: UserPhotoResultDto[];
+}
+
+export interface UnreadPhotoFolderDto {
+  folder_key: string;
+  job_id: string;
+  folder_name: string;
+  inventory_date: string;
+  user_id: string;
+  username: string;
+  file_count: number;
+  files: string[];
 }
 
 export async function adminCreatePhotoJob(
@@ -303,6 +327,46 @@ export async function adminListPhotoHistory(
   const url = new URL(`${API_BASE}/admin/photo-history`, window.location.href);
   if (inventoryDate) url.searchParams.set("inventory_date", inventoryDate);
   const res = await fetch(url.toString(), { headers: authHeaders(token) });
+  return handle(res);
+}
+
+export async function adminListUnreadPhotoFolders(token: string): Promise<UnreadPhotoFolderDto[]> {
+  const res = await fetch(`${API_BASE}/admin/photo-jobs/unread`, { headers: authHeaders(token) });
+  return handle(res);
+}
+
+export async function adminDeleteUnreadPhotoFolder(token: string, folderKey: string): Promise<{ deleted: boolean; folder_key: string }> {
+  const res = await fetch(`${API_BASE}/admin/photo-jobs/unread/${encodeURIComponent(folderKey)}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  return handle(res);
+}
+
+export async function adminAddManualCodeToUnreadFolder(
+  token: string,
+  folderKey: string,
+  payload: { user_id: string; code: string; inventory_date?: string }
+): Promise<{ added: boolean; reason: string | null; folder_key: string }> {
+  const res = await fetch(`${API_BASE}/admin/photo-jobs/unread/${encodeURIComponent(folderKey)}/manual-code`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify(payload),
+  });
+  return handle(res);
+}
+
+export async function adminAddManualCodeToUser(
+  token: string,
+  inventoryDate: string,
+  userId: string,
+  code: string,
+): Promise<{ added: boolean; reason: string | null; user_id: string; inventory_date: string }> {
+  const res = await fetch(`${API_BASE}/admin/days/${encodeURIComponent(inventoryDate)}/users/${encodeURIComponent(userId)}/manual-code`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ code }),
+  });
   return handle(res);
 }
 

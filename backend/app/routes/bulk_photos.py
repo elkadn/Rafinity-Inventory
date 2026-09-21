@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import os
+import re
 import shutil
 import time
 import uuid
@@ -13,6 +14,7 @@ from pathlib import PurePosixPath
 import cv2
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.auth import require_admin
@@ -32,6 +34,7 @@ MAX_PHOTOS_PER_JOB = 1000
 MAX_PHOTO_SIZE_BYTES = 25 * 1024 * 1024
 PHOTO_WORKERS = max(4, min(8, os.cpu_count() or 4))
 JOB_CHECKPOINT_INTERVAL = 100
+UNREAD_PHOTO_ROOT = os.path.join(BULK_JOB_ROOT, "unread")
 
 
 class UserPhotoResult(BaseModel):
@@ -44,6 +47,7 @@ class UserPhotoResult(BaseModel):
     duplicates: int
     skipped: int
     codes: list[str] = Field(default_factory=list)
+    unread_folders: list["UnreadPhotoFolder"] = Field(default_factory=list)
 
 
 class BulkPhotoJobResponse(BaseModel):
@@ -61,7 +65,25 @@ class BulkPhotoJobResponse(BaseModel):
     skipped: int
     inventory_date: str
     error: str | None = None
+    unread_images: list[dict] = Field(default_factory=list)
     user_results: list[UserPhotoResult] = Field(default_factory=list)
+
+
+class UnreadPhotoFolder(BaseModel):
+    folder_key: str
+    job_id: str
+    folder_name: str
+    inventory_date: str
+    user_id: str
+    username: str
+    file_count: int
+    files: list[str] = Field(default_factory=list)
+
+
+class ManualPhotoCodeRequest(BaseModel):
+    user_id: str
+    code: str
+    inventory_date: str | None = None
 
 
 def _ensure_dir(path: str) -> None:
@@ -78,33 +100,6 @@ def _write_job(job: dict) -> None:
     with open(temporary_path, "w", encoding="utf-8") as handle:
         json.dump(job, handle)
     os.replace(temporary_path, _job_path(job["id"]))
-
-
-def _timings_path(job_id: str) -> str:
-    return os.path.join(BULK_JOB_ROOT, f"{job_id}.timings.json")
-
-
-def _write_timing_report(job: dict) -> None:
-    _ensure_dir(BULK_JOB_ROOT)
-    report = {
-        "job_id": job["id"],
-        "status": job.get("status"),
-        "inventory_date": job.get("inventory_date"),
-        "created_at": job.get("created_at"),
-        "started_at": job.get("started_at"),
-        "finished_at": job.get("finished_at"),
-        "total_photos": job.get("total_photos"),
-        "processed_photos": job.get("processed_photos"),
-        "codes_found": job.get("codes_found"),
-        "added": job.get("added"),
-        "duplicates": job.get("duplicates"),
-        "skipped": job.get("skipped"),
-        "summary": job.get("timing", {}).get("summary", {}),
-        "batches": job.get("timing", {}).get("batches", []),
-        "events": job.get("timing", {}).get("events", []),
-    }
-    with open(_timings_path(job["id"]), "w", encoding="utf-8") as handle:
-        json.dump(report, handle, indent=2, sort_keys=True)
 
 
 def _read_job(job_id: str) -> dict | None:
@@ -124,14 +119,154 @@ def _delete_job_file(job_id: str) -> None:
         logger.warning("Unable to remove completed photo job %s", job_id, exc_info=True)
 
 
+def _sanitize_folder_name(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", (value or "inconnu").strip())
+    cleaned = cleaned.strip("._")
+    return cleaned or "inconnu"
+
+
+def _save_unread_photo_for_job(
+    *,
+    root_dir: str,
+    job_id: str,
+    folder_name: str,
+    inventory_date: str,
+    user_id: str,
+    username: str,
+    source_path: str,
+    file_name: str,
+) -> dict:
+    unread_root = os.path.join(root_dir, "unread")
+    _ensure_dir(unread_root)
+    safe_folder = _sanitize_folder_name(folder_name)
+    folder_key = f"{safe_folder}_{job_id[:8]}"
+    folder_path = os.path.join(unread_root, folder_key)
+    _ensure_dir(folder_path)
+    target_path = os.path.join(folder_path, os.path.basename(file_name))
+    if not os.path.exists(target_path):
+        shutil.copy2(source_path, target_path)
+
+    manifest_path = os.path.join(folder_path, "manifest.json")
+    manifest = {
+        "job_id": job_id,
+        "folder_name": folder_name,
+        "inventory_date": inventory_date,
+        "user_id": user_id,
+        "username": username,
+        "files": [],
+    }
+    if os.path.exists(manifest_path):
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as handle:
+                manifest = json.load(handle)
+        except (FileNotFoundError, json.JSONDecodeError):
+            manifest = {
+                "job_id": job_id,
+                "folder_name": folder_name,
+                "inventory_date": inventory_date,
+                "user_id": user_id,
+                "username": username,
+                "files": [],
+            }
+
+    file_entries = manifest.setdefault("files", [])
+    file_names = {
+        entry.get("file_name") for entry in file_entries if isinstance(entry, dict)
+    }
+    if os.path.basename(file_name) not in file_names:
+        file_entries.append(
+            {
+                "file_name": os.path.basename(file_name),
+                "created_at": time.time(),
+                "source_path": source_path,
+            }
+        )
+    manifest["job_id"] = job_id
+    manifest["folder_name"] = folder_name
+    manifest["inventory_date"] = inventory_date
+    manifest["user_id"] = user_id
+    manifest["username"] = username
+
+    with open(manifest_path, "w", encoding="utf-8") as handle:
+        json.dump(manifest, handle, indent=2, sort_keys=True)
+
+    return {
+        "job_id": job_id,
+        "folder_key": folder_key,
+        "folder_name": folder_name,
+        "inventory_date": inventory_date,
+        "user_id": user_id,
+        "username": username,
+        "file_name": os.path.basename(file_name),
+        "directory_path": folder_path,
+        "created_at": time.time(),
+    }
+
+
+def _list_unread_photo_folders(
+    root_dir: str = BULK_JOB_ROOT,
+    *,
+    job_id: str | None = None,
+    user_id: str | None = None,
+) -> list[dict]:
+    unread_root = os.path.join(root_dir, "unread")
+    if not os.path.isdir(unread_root):
+        return []
+
+    folders: list[dict] = []
+    for entry in sorted(os.listdir(unread_root)):
+        folder_path = os.path.join(unread_root, entry)
+        if not os.path.isdir(folder_path):
+            continue
+        manifest_path = os.path.join(folder_path, "manifest.json")
+        if not os.path.exists(manifest_path):
+            continue
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as handle:
+                manifest = json.load(handle)
+        except (FileNotFoundError, json.JSONDecodeError):
+            continue
+        if job_id and manifest.get("job_id") != job_id:
+            continue
+        if user_id and manifest.get("user_id") != user_id:
+            continue
+        file_names = [
+            item.get("file_name")
+            for item in manifest.get("files", [])
+            if isinstance(item, dict) and item.get("file_name")
+        ]
+        folders.append(
+            {
+                "folder_key": entry,
+                "job_id": manifest.get("job_id", ""),
+                "folder_name": manifest.get("folder_name", entry),
+                "inventory_date": manifest.get("inventory_date", ""),
+                "user_id": manifest.get("user_id", ""),
+                "username": manifest.get("username", ""),
+                "file_count": len(file_names),
+                "files": file_names,
+            }
+        )
+    return folders
+
+
 def _public_job(job: dict) -> BulkPhotoJobResponse:
-    return BulkPhotoJobResponse(
-        **{
-            key: value
-            for key, value in job.items()
-            if key in BulkPhotoJobResponse.model_fields
-        }
-    )
+    payload = {
+        key: value
+        for key, value in job.items()
+        if key in BulkPhotoJobResponse.model_fields
+    }
+    payload.setdefault("unread_images", job.get("unread_images", []))
+    job_id = job.get("id") or job.get("_id")
+    if job_id:
+        unread_for_job = _list_unread_photo_folders(job_id=job_id)
+        payload["unread_images"] = unread_for_job
+        for user_result in payload.get("user_results", []):
+            user_result["unread_folders"] = _list_unread_photo_folders(
+                job_id=job_id,
+                user_id=user_result.get("user_id"),
+            )
+    return BulkPhotoJobResponse(**payload)
 
 
 def _file_parts(filename: str) -> tuple[str, ...]:
@@ -143,11 +278,31 @@ def _file_parts(filename: str) -> tuple[str, ...]:
 
 
 def _folder_name(filename: str) -> str | None:
-    parts = _file_parts(filename)
-    if len(parts) < 2:
+    parts = [part for part in _file_parts(filename) if part and part not in {".", ".."}]
+    if not parts:
         return None
-    # webkitdirectory sends parent/user/photo; also accept user/photo.
-    return parts[1] if len(parts) >= 3 else parts[0]
+
+    directory_parts = parts[:-1]
+    if not directory_parts:
+        return None
+
+    cleaned = [
+        part
+        for part in directory_parts
+        if part.lower() not in {"fakepath", "c:", "file:"}
+    ]
+    if not cleaned:
+        return None
+
+    # Browser uploads may include a parent folder and/or a synthetic
+    # fakepath prefix; the actual user folder is the last meaningful segment
+    # before the file itself.
+    return cleaned[-1]
+
+
+def _resolve_upload_folder_name(upload: object, user: dict) -> str:
+    filename = getattr(upload, "filename", "") or ""
+    return _folder_name(filename) or str(user.get("username") or "inconnu")
 
 
 def _decode_photo(path: str) -> set[str]:
@@ -185,7 +340,6 @@ async def _run_job(job: dict, job_dir: str) -> None:
     job["started_at"] = start_time
     job["progress"] = "Traitement des photos…"
     _write_job(job)
-    _write_timing_report(job)
     try:
         batch_timing: list[dict] = []
         user_results = {
@@ -263,6 +417,23 @@ async def _run_job(job: dict, job_dir: str) -> None:
                     return
                 decode_elapsed = time.time() - decode_started
 
+                if not codes:
+                    unread_entry = _save_unread_photo_for_job(
+                        root_dir=BULK_JOB_ROOT,
+                        job_id=job["id"],
+                        folder_name=item.get("folder_name")
+                        or item.get("username")
+                        or "inconnu",
+                        inventory_date=job["inventory_date"],
+                        user_id=item["user_id"],
+                        username=item["username"],
+                        source_path=os.path.join(job_dir, item["stored_name"]),
+                        file_name=item["stored_name"],
+                    )
+                    job.setdefault("unread_images", []).append(unread_entry)
+                    await mark_skipped(item)
+                    return
+
                 added = 0
                 duplicates = 0
                 db_started = time.time()
@@ -322,7 +493,6 @@ async def _run_job(job: dict, job_dir: str) -> None:
                     checkpoint_counter += 1
                     if checkpoint_counter >= JOB_CHECKPOINT_INTERVAL:
                         _write_job(job)
-                        _write_timing_report(job)
                         checkpoint_counter = 0
 
             async def worker() -> None:
@@ -369,7 +539,6 @@ async def _run_job(job: dict, job_dir: str) -> None:
                 job["added"],
             )
             _write_job(job)
-            _write_timing_report(job)
             if batch_index < len(batches):
                 job["progress"] = (
                     f"Lot {batch_index} / {len(batches)} · "
@@ -403,7 +572,6 @@ async def _run_job(job: dict, job_dir: str) -> None:
             job["timing"]["summary"]["batch_seconds"],
             job["timing"]["summary"]["total_seconds"],
         )
-        _write_timing_report(job)
         await _persist_completed_job(job)
     except Exception as error:
         logger.exception("Bulk photo job %s failed", job["id"])
@@ -485,12 +653,12 @@ async def create_photo_job(
     users_by_name = {str(user["username"]).casefold(): user for user in users}
     assignments: list[tuple[UploadFile, dict]] = []
     for upload in image_files:
-        folder = _folder_name(upload.filename or "")
-        user = users_by_name.get(folder.casefold() if folder else "")
+        folder_name = _resolve_upload_folder_name(upload, {})
+        user = users_by_name.get(folder_name.casefold() if folder_name else "")
         if not user:
             raise HTTPException(
                 status_code=400,
-                detail=f"Aucun utilisateur trouvé pour le dossier '{folder or '?'}'.",
+                detail=f"Aucun utilisateur trouvé pour le dossier '{folder_name or '?'}'.",
             )
         assignments.append((upload, user))
 
@@ -509,6 +677,7 @@ async def create_photo_job(
             stored_name = (
                 f"{index:06d}{os.path.splitext(upload.filename or '')[1].lower()}"
             )
+            folder_name = _resolve_upload_folder_name(upload, user)
             with open(os.path.join(job_dir, stored_name), "wb") as handle:
                 handle.write(data)
             job_files.append(
@@ -516,6 +685,7 @@ async def create_photo_job(
                     "stored_name": stored_name,
                     "user_id": user["_id"],
                     "username": user["username"],
+                    "folder_name": folder_name,
                 }
             )
     except Exception:
@@ -582,7 +752,6 @@ async def create_photo_job(
         "batches": [],
         "events": [],
     }
-    _write_timing_report(job)
     logger.info(
         "Queued photo job %s for %s images (inventory=%s)",
         job_id,
@@ -671,6 +840,7 @@ async def list_photo_history(
                     "id": job["_id"],
                     "progress": "Traitement terminé",
                     "error": job.get("error"),
+                    "unread_images": [],
                     "user_results": [
                         {
                             **row,
@@ -705,6 +875,78 @@ async def list_photo_jobs(
         if job.get("admin_id") == admin.id:
             jobs.append(_public_job(job))
     return sorted(jobs, key=lambda job: job.created_at, reverse=True)[:50]
+
+
+@router.get("/photo-jobs/unread", response_model=list[UnreadPhotoFolder])
+async def list_unread_photo_folders(
+    admin: UserPublic = Depends(require_admin),
+) -> list[UnreadPhotoFolder]:
+    del admin
+    folders = _list_unread_photo_folders()
+    return [UnreadPhotoFolder(**folder) for folder in folders]
+
+
+@router.get("/photo-jobs/unread/{folder_key}/files/{filename}")
+async def get_unread_photo_file(
+    folder_key: str,
+    filename: str,
+    admin: UserPublic = Depends(require_admin),
+):
+    del admin
+    safe_path = PurePosixPath(filename)
+    if ".." in safe_path.parts or safe_path.is_absolute():
+        raise HTTPException(status_code=400, detail="Nom de fichier invalide.")
+    folder_path = os.path.join(UNREAD_PHOTO_ROOT, folder_key)
+    file_path = os.path.join(folder_path, safe_path.name)
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="Image non lue introuvable.")
+    return FileResponse(file_path)
+
+
+@router.delete("/photo-jobs/unread/{folder_key}")
+async def delete_unread_photo_folder(
+    folder_key: str,
+    admin: UserPublic = Depends(require_admin),
+) -> dict:
+    del admin
+    folder_path = os.path.join(UNREAD_PHOTO_ROOT, folder_key)
+    if not os.path.isdir(folder_path):
+        raise HTTPException(
+            status_code=404, detail="Dossier de photos non lues introuvable."
+        )
+    shutil.rmtree(folder_path, ignore_errors=True)
+    return {"deleted": True, "folder_key": folder_key}
+
+
+@router.post("/photo-jobs/unread/{folder_key}/manual-code", response_model=dict)
+async def add_manual_code_to_unread_folder(
+    folder_key: str,
+    payload: ManualPhotoCodeRequest,
+    admin: UserPublic = Depends(require_admin),
+) -> dict:
+    del admin
+    folder_path = os.path.join(UNREAD_PHOTO_ROOT, folder_key)
+    if not os.path.isdir(folder_path):
+        raise HTTPException(
+            status_code=404, detail="Dossier de photos non lues introuvable."
+        )
+
+    if not payload.code.strip():
+        raise HTTPException(status_code=400, detail="Le code ne peut pas être vide.")
+
+    db = get_db()
+    user_doc = await db.users.find_one({"_id": payload.user_id})
+    if not user_doc:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable.")
+
+    result = await register_code_for_user(
+        user_id=payload.user_id,
+        username=user_doc["username"],
+        code=payload.code,
+        method="manuel",
+        inventory_date=payload.inventory_date or _today(),
+    )
+    return {"added": result.added, "reason": result.reason, "folder_key": folder_key}
 
 
 @router.get("/photo-jobs/{job_id}", response_model=BulkPhotoJobResponse)

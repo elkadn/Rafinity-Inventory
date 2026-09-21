@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent, CSSProperties, ReactNode } from "react";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import {
   adminListDays,
@@ -25,6 +26,11 @@ import {
   adminCreatePhotoJob,
   adminListPhotoJobs,
   adminListPhotoHistory,
+  adminListUnreadPhotoFolders,
+  adminDeleteUnreadPhotoFolder,
+  adminAddManualCodeToUnreadFolder,
+  adminAddManualCodeToUser,
+  type UnreadPhotoFolderDto,
 } from "../lib/api";
 import { DownloadIcon } from "../components/icons";
 
@@ -38,7 +44,7 @@ type View =
   | { kind: "inventory" }
   | { kind: "deletions" };
 
-type NavKey = "days" | "photos" | "inventory" | "deletions" | "users";
+type NavKey = "days" | "photos" | "folders" | "inventory" | "deletions" | "users";
 
 const NAV_ITEMS: { key: NavKey; label: string; icon: ReactNode }[] = [
   { key: "days", label: "Scans", icon: <ScanIcon /> },
@@ -60,8 +66,173 @@ function initials(prenom?: string, nom?: string, username?: string) {
   return (username ?? "?").slice(0, 2).toUpperCase();
 }
 
+type AdminSidebarProps = {
+  activeNav: NavKey;
+  onNavigate: (key: NavKey) => void;
+  user: AuthUserDto | null | undefined;
+  activeInventory?: ActiveInventoryDto | null;
+  onLogout?: () => void;
+};
+
+function AdminSidebar({
+  activeNav,
+  onNavigate,
+  user,
+  activeInventory,
+  onLogout,
+}: AdminSidebarProps) {
+  return (
+    <aside className="admin-sidebar" style={sidebarStyle}>
+      <div style={sidebarBrandStyle}>
+        <img
+          src="/rafinity.png"
+          alt="Rafinity"
+          style={{
+            height: 30,
+            width: "auto",
+            objectFit: "contain",
+          }}
+        />
+
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+          }}
+        >
+          <div
+            style={{
+              fontSize: 15,
+              fontWeight: 800,
+              color: "#2b2a22",
+            }}
+          >
+            Gestion d'inventaire
+          </div>
+        </div>
+      </div>
+
+      <div style={{ padding: "18px 14px 6px" }}>
+        <div style={navSectionLabelStyle}>Menu</div>
+      </div>
+      <nav
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 4,
+          padding: "0 12px",
+          flex: 1,
+        }}
+      >
+        {NAV_ITEMS.map((item) => {
+          const isActive = activeNav === item.key;
+          return (
+            <div key={item.key}>
+              <button
+                className={`admin-nav-btn${isActive ? " active" : ""}`}
+                onClick={() => onNavigate(item.key)}
+                style={{
+                  ...navBtnStyle,
+                  color: isActive ? "#6b6242" : "#59543f",
+                  fontWeight: isActive ? 700 : 600,
+                  borderLeft: isActive
+                    ? "3px solid #bdb184"
+                    : "3px solid transparent",
+                }}
+              >
+                <span
+                  style={{
+                    display: "flex",
+                    width: 18,
+                    color: isActive ? "#6b6242" : "#9a927a",
+                  }}
+                >
+                  {item.icon}
+                </span>
+                {item.label}
+              </button>
+              {item.key === "inventory" && activeInventory && (
+                <div style={sidebarInventoryChipStyle}>
+                  <span style={liveDotStyle} />
+                  <div style={{ minWidth: 0 }}>
+                    <div
+                      style={{
+                        fontSize: 11.5,
+                        fontWeight: 700,
+                        color: "#3b6d11",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {activeInventory.label ?? activeInventory.inventory_date}
+                    </div>
+                    <div style={{ fontSize: 10.5, color: "#7f9457" }}>
+                      {activeInventory.inventory_date}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {activeNav === "folders" && (
+          <div>
+            <button
+              className="admin-nav-btn active"
+              onClick={() => onNavigate("folders")}
+              style={{
+                ...navBtnStyle,
+                color: "#6b6242",
+                fontWeight: 700,
+                borderLeft: "3px solid #bdb184",
+              }}
+            >
+              <span style={{ display: "flex", width: 18, color: "#6b6242" }}>
+                <FolderIcon />
+              </span>
+              Dossiers
+            </button>
+          </div>
+        )}
+      </nav>
+
+      <div style={sidebarFooterStyle}>
+        <div style={userChipStyle}>
+          <div style={avatarStyle}>{initials(undefined, undefined, user?.username)}</div>
+          <div style={{ minWidth: 0 }}>
+            <div
+              style={{
+                fontSize: 13,
+                fontWeight: 700,
+                color: "#2b2a22",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {user?.username}
+            </div>
+            <div style={{ fontSize: 11, color: "#9a927a" }}>Administrateur</div>
+          </div>
+        </div>
+        <button
+          className="admin-logout-btn"
+          onClick={onLogout}
+          style={logoutBtnStyle}
+        >
+          <LogoutIcon />
+          Déconnexion
+        </button>
+      </div>
+    </aside>
+  );
+}
+
 export default function AdminPage() {
   const { token, user, logout } = useAuth();
+  const location = useLocation();
   const [view, setView] = useState<View>({ kind: "days" });
   const [days, setDays] = useState<DaySummaryDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -84,14 +255,20 @@ export default function AdminPage() {
       .catch(() => {});
   }, [token]);
 
-  const activeNav = navKeyForView(view);
+  const isUnreadFolderRoute = location.pathname.startsWith("/admin/unread-folder/");
+  const activeNav = isUnreadFolderRoute ? "folders" : navKeyForView(view);
 
   const goTo = (key: NavKey) => {
     if (key === "days") {
       setView({ kind: "days" });
       loadDays();
+      return;
     }
-    else setView({ kind: key } as View);
+    if (key === "folders") {
+      setView({ kind: "photos" });
+      return;
+    }
+    setView({ kind: key } as View);
   };
 
   return (
@@ -131,138 +308,13 @@ export default function AdminPage() {
         }
       `}</style>
 
-      {/* Sidebar (desktop) */}
-      <aside className="admin-sidebar" style={sidebarStyle}>
-        <div style={sidebarBrandStyle}>
-          <img
-            src="/rafinity.png"
-            alt="Rafinity"
-            style={{
-              height: 30,
-              width: "auto",
-              objectFit: "contain",
-            }}
-          />
-
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-            }}
-          >
-            <div
-              style={{
-                fontSize: 15,
-                fontWeight: 800,
-                color: "#2b2a22",
-              }}
-            >
-              Gestion d'inventaire
-            </div>
-          </div>
-        </div>
-
-        <div style={{ padding: "18px 14px 6px" }}>
-          <div style={navSectionLabelStyle}>Menu</div>
-        </div>
-        <nav
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 4,
-            padding: "0 12px",
-            flex: 1,
-          }}
-        >
-          {NAV_ITEMS.map((item) => {
-            const isActive = activeNav === item.key;
-            return (
-              <div key={item.key}>
-                <button
-                  className={`admin-nav-btn${isActive ? " active" : ""}`}
-                  onClick={() => goTo(item.key)}
-                  style={{
-                    ...navBtnStyle,
-                    color: isActive ? "#6b6242" : "#59543f",
-                    fontWeight: isActive ? 700 : 600,
-                    borderLeft: isActive
-                      ? "3px solid #bdb184"
-                      : "3px solid transparent",
-                  }}
-                >
-                  <span
-                    style={{
-                      display: "flex",
-                      width: 18,
-                      color: isActive ? "#6b6242" : "#9a927a",
-                    }}
-                  >
-                    {item.icon}
-                  </span>
-                  {item.label}
-                </button>
-                {item.key === "inventory" && activeInventory && (
-                  <div style={sidebarInventoryChipStyle}>
-                    <span style={liveDotStyle} />
-                    <div style={{ minWidth: 0 }}>
-                      <div
-                        style={{
-                          fontSize: 11.5,
-                          fontWeight: 700,
-                          color: "#3b6d11",
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        }}
-                      >
-                        {activeInventory.label ??
-                          activeInventory.inventory_date}
-                      </div>
-                      <div style={{ fontSize: 10.5, color: "#7f9457" }}>
-                        {activeInventory.inventory_date}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </nav>
-
-        <div style={sidebarFooterStyle}>
-          <div style={userChipStyle}>
-            <div style={avatarStyle}>
-              {initials(undefined, undefined, user?.username)}
-            </div>
-            <div style={{ minWidth: 0 }}>
-              <div
-                style={{
-                  fontSize: 13,
-                  fontWeight: 700,
-                  color: "#2b2a22",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-              >
-                {user?.username}
-              </div>
-              <div style={{ fontSize: 11, color: "#9a927a" }}>
-                Administrateur
-              </div>
-            </div>
-          </div>
-          <button
-            className="admin-logout-btn"
-            onClick={logout}
-            style={logoutBtnStyle}
-          >
-            <LogoutIcon />
-            Déconnexion
-          </button>
-        </div>
-      </aside>
+      <AdminSidebar
+        activeNav={activeNav}
+        onNavigate={goTo}
+        user={user}
+        activeInventory={activeInventory}
+        onLogout={logout}
+      />
 
       <div className="admin-main" style={mainStyle}>
         {/* Mobile top nav */}
@@ -578,12 +630,19 @@ function UserScansView({
   const [data, setData] = useState<UserDayScansDto | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<ScanDto | null>(null);
+  const [manualCode, setManualCode] = useState("");
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   useEffect(() => {
     if (!token) return;
     adminUserDayScans(token, date, userId).then(setData);
   }, [token, date, userId]);
+
+  const refreshUserData = async () => {
+    if (!token) return;
+    const next = await adminUserDayScans(token, date, userId);
+    setData(next);
+  };
 
   if (!data) return <PageSkeleton />;
 
@@ -604,6 +663,26 @@ function UserScansView({
     }
   };
 
+  const addManualCode = async () => {
+    const code = manualCode.trim();
+    if (!token || !code) {
+      setToast({ type: "error", message: "Saisis un code avant de l’ajouter." });
+      return;
+    }
+    try {
+      const result = await adminAddManualCodeToUser(token, date, userId, code);
+      if (result.added) {
+        setManualCode("");
+        await refreshUserData();
+        setToast({ type: "success", message: `Code ${code} ajouté pour ${data.user.username}.` });
+      } else {
+        setToast({ type: "error", message: result.reason ?? "Ce code est déjà présent." });
+      }
+    } catch (error) {
+      setToast({ type: "error", message: error instanceof Error ? error.message : "Ajout manuel impossible." });
+    }
+  };
+
   return (
     <div>
       <BackButton onClick={onBack} label={date} />
@@ -618,6 +697,17 @@ function UserScansView({
         >
           <DownloadIcon size={15} /> Export Excel
         </PrimaryButton>
+      </div>
+
+      <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
+        <input
+          value={manualCode}
+          onChange={(event) => setManualCode(event.target.value)}
+          placeholder="Ajouter un code manuel"
+          className="admin-input"
+          style={{ ...inputStyle, minWidth: 210, flex: 1, maxWidth: 300 }}
+        />
+        <PrimaryButton onClick={() => void addManualCode()}>Ajouter</PrimaryButton>
       </div>
 
       {/* Barre de recherche */}
@@ -1114,12 +1204,17 @@ function PhotoImportView() {
   const [files, setFiles] = useState<File[]>([]);
   const [jobs, setJobs] = useState<BulkPhotoJobDto[]>([]);
   const [history, setHistory] = useState<BulkPhotoJobDto[]>([]);
+  const [unreadFolders, setUnreadFolders] = useState<UnreadPhotoFolderDto[]>([]);
   const [historyDate, setHistoryDate] = useState("");
   const [expandedJobIds, setExpandedJobIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
+  const [manualCodeDrafts, setManualCodeDrafts] = useState<Record<string, string>>({});
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [confirmUpload, setConfirmUpload] = useState(false);
+  const [confirmDeleteFolder, setConfirmDeleteFolder] = useState<UnreadPhotoFolderDto | null>(null);
+  const [previewImage, setPreviewImage] = useState<{ url: string; name: string; folderKey: string } | null>(null);
   const knownJobStatuses = useRef<Map<string, BulkPhotoJobDto["status"]> | null>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (!toast) return;
@@ -1203,17 +1298,18 @@ function PhotoImportView() {
   const loadJobs = async () => {
     if (!token) return;
     try {
-      const activeJobs = await adminListPhotoJobs(token);
-      let completedJobs: BulkPhotoJobDto[] = [];
-      try {
-        completedJobs = await adminListPhotoHistory(token, historyDate || undefined);
-      } catch (error) {
-        setToast({
-          type: "error",
-          message: error instanceof Error ? `Historique photo: ${error.message}` : "Impossible de charger l'historique photo.",
-        });
-      }
-      const allJobs = [...activeJobs, ...completedJobs];
+      const [activeJobs, completedJobsRaw, unread] = await Promise.all([
+        adminListPhotoJobs(token),
+        adminListPhotoHistory(token, historyDate || undefined).catch((error) => {
+          setToast({
+            type: "error",
+            message: error instanceof Error ? `Historique photo: ${error.message}` : "Impossible de charger l'historique photo.",
+          });
+          return [] as BulkPhotoJobDto[];
+        }),
+        adminListUnreadPhotoFolders(token).catch(() => [] as UnreadPhotoFolderDto[]),
+      ]);
+      const allJobs = [...activeJobs, ...completedJobsRaw];
       const previousStatuses = knownJobStatuses.current;
       const statusChangedJob = previousStatuses
         ? allJobs.find(
@@ -1231,7 +1327,8 @@ function PhotoImportView() {
       }
       knownJobStatuses.current = new Map(allJobs.map((job) => [job.id, job.status]));
       setJobs(activeJobs);
-      setHistory(completedJobs);
+      setHistory(completedJobsRaw);
+      setUnreadFolders(unread);
     } catch (error) {
       setToast({
         type: "error",
@@ -1270,6 +1367,86 @@ function PhotoImportView() {
       else next.add(jobId);
       return next;
     });
+  };
+
+  const openUnreadPhotoPreview = async (folder: UnreadPhotoFolderDto, file: string) => {
+    if (!token) return;
+    try {
+      const apiBase = import.meta.env.VITE_API_BASE_URL || "/api";
+      const url = `${apiBase}/admin/photo-jobs/unread/${encodeURIComponent(folder.folder_key)}/files/${encodeURIComponent(file)}`;
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error(`${res.status}`);
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      setPreviewImage({ url: objectUrl, name: file, folderKey: folder.folder_key });
+    } catch (error) {
+      setToast({ type: "error", message: error instanceof Error ? `Impossible de charger l’image: ${error.message}` : "Impossible de charger l’image." });
+    }
+  };
+
+  const removeFolderFromJobState = (folderKey: string) => {
+    setJobs((current) =>
+      current.map((job) => ({
+        ...job,
+        user_results: (job.user_results ?? []).map((result) => ({
+          ...result,
+          unread_folders: (result.unread_folders ?? []).filter((folder) => folder.folder_key !== folderKey),
+        })),
+      })),
+    );
+    setHistory((current) =>
+      current.map((job) => ({
+        ...job,
+        user_results: (job.user_results ?? []).map((result) => ({
+          ...result,
+          unread_folders: (result.unread_folders ?? []).filter((folder) => folder.folder_key !== folderKey),
+        })),
+      })),
+    );
+    setUnreadFolders((current) => current.filter((folder) => folder.folder_key !== folderKey));
+  };
+
+  const handleDeleteUnreadFolder = async (folderKey: string) => {
+    if (!token) return;
+    try {
+      await adminDeleteUnreadPhotoFolder(token, folderKey);
+      removeFolderFromJobState(folderKey);
+      setToast({ type: "success", message: "Le dossier a été supprimé." });
+    } catch (error) {
+      setToast({ type: "error", message: error instanceof Error ? error.message : "Suppression impossible." });
+    }
+  };
+
+  const confirmDeleteUnreadFolder = async () => {
+    if (!confirmDeleteFolder) return;
+    setConfirmDeleteFolder(null);
+    await handleDeleteUnreadFolder(confirmDeleteFolder.folder_key);
+  };
+
+  const handleAddManualCode = async (folder: UnreadPhotoFolderDto) => {
+    if (!token) return;
+    const code = (manualCodeDrafts[folder.folder_key] ?? "").trim();
+    if (!code) {
+      setToast({ type: "error", message: "Saisis un code avant de l’ajouter." });
+      return;
+    }
+    try {
+      const result = await adminAddManualCodeToUnreadFolder(token, folder.folder_key, {
+        user_id: folder.user_id,
+        code,
+        inventory_date: folder.inventory_date,
+      });
+      if (result.added) {
+        setUnreadFolders((current) => current.filter((item) => item.folder_key !== folder.folder_key));
+        setManualCodeDrafts((current) => ({ ...current, [folder.folder_key]: "" }));
+        setToast({ type: "success", message: `Code ${code} ajouté pour ${folder.username}.` });
+        await loadJobs();
+      } else {
+        setToast({ type: "error", message: result.reason ?? "Ce code est déjà présent." });
+      }
+    } catch (error) {
+      setToast({ type: "error", message: error instanceof Error ? error.message : "Ajout manuel impossible." });
+    }
   };
 
   return (
@@ -1412,6 +1589,84 @@ function PhotoImportView() {
                       {result.codes.length > 0 && (
                         <CompactCodeChips codes={result.codes} />
                       )}
+                      {(result.unread_folders ?? []).length > 0 && (
+                        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                          {result.unread_folders.map((folder, folderIndex) => {
+                            const previewImage = folder.files.slice(0, 1)[0];
+                            if (!previewImage) return null;
+                            return (
+                              <div key={`${result.user_id}-${folder.folder_key || folder.folder_name}-${folderIndex}`} style={{ border: "1px solid #eadfba", borderRadius: 10, background: "#fffaf1", padding: 8 }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => navigate(`/admin/unread-folder/${encodeURIComponent(folder.folder_key)}`)}
+                                    style={{
+                                      background: "transparent",
+                                      border: "none",
+                                      padding: 0,
+                                      color: "#2b2a22",
+                                      fontWeight: 800,
+                                      fontSize: 12.5,
+                                      cursor: "pointer",
+                                      textAlign: "left",
+                                    }}
+                                  >
+                                    {folder.folder_name}
+                                  </button>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                    <span style={{ fontSize: 11, color: "#7a6d44" }}>{folder.file_count} image(s)</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmDeleteFolder(folder)}
+                                      style={{
+                                        border: "1px solid #d7c38c",
+                                        background: "#fff8e8",
+                                        color: "#6e5630",
+                                        borderRadius: 8,
+                                        padding: "4px 8px",
+                                        fontSize: 11,
+                                        fontWeight: 700,
+                                        cursor: "pointer",
+                                      }}
+                                    >
+                                      Supprimer
+                                    </button>
+                                  </div>
+                                </div>
+                                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                                  {folder.files.slice(0, 6).map((file) => (
+                                    <button
+                                      key={file}
+                                      type="button"
+                                      onClick={() => void openUnreadPhotoPreview(folder, file)}
+                                      style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        minWidth: 52,
+                                        height: 52,
+                                        borderRadius: 8,
+                                        background: "#ffffff",
+                                        border: "1px solid #eadfba",
+                                        color: "#2b2a22",
+                                        fontSize: 10,
+                                        fontWeight: 700,
+                                        padding: 4,
+                                        cursor: "pointer",
+                                        overflow: "hidden",
+                                        wordBreak: "break-all",
+                                      }}
+                                      title={file}
+                                    >
+                                      {file}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                       <div style={userPhotoResultStatsStyle}>
                         <span style={{ color: "#3b7d2a" }}>{result.added} ajoutés</span>
                         <span style={{ color: "#a15c08" }}>{result.duplicates} doublons</span>
@@ -1427,6 +1682,44 @@ function PhotoImportView() {
           );
         })}
       </div>
+      {previewImage && (
+        <div
+          onClick={() => {
+            URL.revokeObjectURL(previewImage.url);
+            setPreviewImage(null);
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(18, 18, 18, 0.7)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1200,
+            padding: 20,
+          }}
+        >
+          <div
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              background: "#fff",
+              borderRadius: 14,
+              padding: 10,
+              maxWidth: "90vw",
+              maxHeight: "90vh",
+              boxShadow: "0 18px 44px rgba(0,0,0,0.2)",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 8 }}>
+              <strong style={{ fontSize: 13, color: "#2b2a22" }}>{previewImage.name}</strong>
+              <button type="button" onClick={() => { URL.revokeObjectURL(previewImage.url); setPreviewImage(null); }} style={{ border: "1px solid #d4cfb5", background: "#f7f5ef", borderRadius: 8, padding: "6px 10px", cursor: "pointer", fontWeight: 700 }}>
+                Fermer
+              </button>
+            </div>
+            <img src={previewImage.url} alt={previewImage.name} style={{ display: "block", maxWidth: "80vw", maxHeight: "80vh", borderRadius: 8, objectFit: "contain" }} />
+          </div>
+        </div>
+      )}
       {toast && (
         <AdminToast toast={toast} onClose={() => setToast(null)} />
       )}
@@ -1439,6 +1732,247 @@ function PhotoImportView() {
           onConfirm={launch}
         />
       )}
+      {confirmDeleteFolder && (
+        <ConfirmDialog
+          title="Supprimer le dossier ignoré ?"
+          message={`Le dossier “${confirmDeleteFolder.folder_name}” contient ${confirmDeleteFolder.file_count} image${confirmDeleteFolder.file_count > 1 ? "s" : ""}. Cette action est définitive et supprimera aussi ses fichiers du serveur.`}
+          confirmLabel="Supprimer définitivement"
+          onCancel={() => setConfirmDeleteFolder(null)}
+          onConfirm={confirmDeleteUnreadFolder}
+        />
+      )}
+    </div>
+  );
+}
+
+export function UnreadFolderDetailPage() {
+  const { token, user, logout } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { folderKey } = useParams();
+  const [folder, setFolder] = useState<UnreadPhotoFolderDto | null>(null);
+  const [manualCode, setManualCode] = useState("");
+  const [images, setImages] = useState<{ file: string; url: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [previewImage, setPreviewImage] = useState<{ url: string; name: string; folderKey: string } | null>(null);
+  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  useEffect(() => {
+    if (!token || !folderKey) return;
+
+    void (async () => {
+      try {
+        const folders = await adminListUnreadPhotoFolders(token);
+        const found = folders.find((item) => item.folder_key === decodeURIComponent(folderKey));
+        if (!found) {
+          navigate("/admin", { replace: true });
+          return;
+        }
+        setFolder(found);
+      } catch (error) {
+        setToast({
+          type: "error",
+          message: error instanceof Error ? error.message : "Impossible de charger le dossier.",
+        });
+      }
+    })();
+  }, [token, folderKey, navigate]);
+
+  useEffect(() => {
+    if (!token || !folder) return;
+
+    let cancelled = false;
+    void (async () => {
+      setLoading(true);
+      try {
+        const apiBase = import.meta.env.VITE_API_BASE_URL || "/api";
+        const loaded = await Promise.all(
+          folder.files.map(async (file) => {
+            const url = `${apiBase}/admin/photo-jobs/unread/${encodeURIComponent(folder.folder_key)}/files/${encodeURIComponent(file)}`;
+            const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+            if (!res.ok) throw new Error(`${res.status}`);
+            const blob = await res.blob();
+            return { file, url: URL.createObjectURL(blob) };
+          }),
+        );
+        if (!cancelled) setImages(loaded);
+      } catch (error) {
+        if (!cancelled) {
+          setToast({
+            type: "error",
+            message: error instanceof Error ? `Chargement du dossier: ${error.message}` : "Impossible de charger les images.",
+          });
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      images.forEach((item) => URL.revokeObjectURL(item.url));
+    };
+  }, [token, folder]);
+
+  const handleDelete = async () => {
+    if (!token || !folder) return;
+    setDeleteConfirmOpen(false);
+    try {
+      await adminDeleteUnreadPhotoFolder(token, folder.folder_key);
+      setToast({ type: "success", message: "Le dossier a été supprimé." });
+      navigate("/admin", { replace: true });
+    } catch (error) {
+      setToast({ type: "error", message: error instanceof Error ? error.message : "Suppression impossible." });
+    }
+  };
+
+  const handleAddManualCode = async () => {
+    if (!token || !folder) return;
+    const code = manualCode.trim();
+    if (!code) {
+      setToast({ type: "error", message: "Saisis un code avant de l’ajouter." });
+      return;
+    }
+    try {
+      const result = await adminAddManualCodeToUnreadFolder(token, folder.folder_key, {
+        user_id: folder.user_id,
+        code,
+        inventory_date: folder.inventory_date,
+      });
+      if (result.added) {
+        setManualCode("");
+        setToast({ type: "success", message: `Code ${code} ajouté pour ${folder.username}.` });
+      } else {
+        setToast({ type: "error", message: result.reason ?? "Ce code est déjà présent." });
+      }
+    } catch (error) {
+      setToast({ type: "error", message: error instanceof Error ? error.message : "Ajout manuel impossible." });
+    }
+  };
+
+  const handleSidebarNavigate = (key: NavKey) => {
+    if (key === "folders") {
+      navigate("/admin");
+      return;
+    }
+    if (key === "photos" || key === "days" || key === "inventory" || key === "deletions" || key === "users") {
+      navigate("/admin");
+    }
+  };
+  const sidebarActiveNav: NavKey = location.pathname.startsWith("/admin/unread-folder/") ? "folders" : "photos";
+
+  if (!folder) {
+    return (
+      <div style={shellStyle}>
+        <AdminSidebar
+          activeNav={sidebarActiveNav}
+          onNavigate={handleSidebarNavigate}
+          user={user}
+          onLogout={logout}
+        />
+        <div style={{ flex: 1, padding: 24 }}>
+          <div style={{ ...panelStyle, padding: 24 }}>
+            {loading ? "Chargement du dossier…" : "Dossier introuvable."}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={shellStyle}>
+      <AdminSidebar
+        activeNav={sidebarActiveNav}
+        onNavigate={handleSidebarNavigate}
+        user={user}
+        onLogout={logout}
+      />
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 18, width: "100%", padding: 24 }}>
+        <BackButton onClick={() => navigate("/admin")} label="Retour aux traitements" />
+
+        <div style={headerRowStyle}>
+          <PageHeader title={folder.folder_name} subtitle={`${folder.username} • Inventaire ${folder.inventory_date}`} noMargin />
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <input
+              value={manualCode}
+              onChange={(event) => setManualCode(event.target.value)}
+              placeholder="Ajouter un code manuel"
+              className="admin-input"
+              style={{ ...inputStyle, minWidth: 220, maxWidth: 340, flex: 1 }}
+            />
+            <PrimaryButton onClick={() => void handleAddManualCode()}>Ajouter</PrimaryButton>
+            <DangerButton onClick={() => setDeleteConfirmOpen(true)}>Supprimer le dossier</DangerButton>
+          </div>
+        </div>
+
+        <div style={{ ...panelStyle, padding: 16 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
+            <span style={{ background: "#f6f1df", border: "1px solid #eadfb8", borderRadius: 999, padding: "6px 10px", fontSize: 12.5, color: "#483f2d", fontWeight: 700 }}>
+              Utilisateur: {folder.username}
+            </span>
+            <span style={{ background: "#f6f1df", border: "1px solid #eadfb8", borderRadius: 999, padding: "6px 10px", fontSize: 12.5, color: "#483f2d", fontWeight: 700 }}>
+              Inventaire: {folder.inventory_date}
+            </span>
+            <span style={{ background: "#f6f1df", border: "1px solid #eadfb8", borderRadius: 999, padding: "6px 10px", fontSize: 12.5, color: "#483f2d", fontWeight: 700 }}>
+              {folder.file_count} image(s) non lues
+            </span>
+          </div>
+
+          {loading ? (
+            <div style={{ color: "#715f34", fontWeight: 700, padding: "16px 0" }}>Chargement des images…</div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
+              {images.map(({ file, url }, index) => (
+                <div key={`${folder.folder_key}-${file}-${index}`} style={{ border: "1px solid #ebdfb8", borderRadius: 12, background: "#fffdf8", overflow: "hidden" }}>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewImage({ url, name: file, folderKey: folder.folder_key })}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      border: "none",
+                      background: "#f5f0df",
+                      padding: 0,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <img src={url} alt={file} style={{ display: "block", width: "100%", height: 240, objectFit: "contain", background: "#f5f0df" }} />
+                  </button>
+                  <div style={{ padding: "8px 10px", fontSize: 11.5, color: "#4d483a", overflowWrap: "anywhere", borderTop: "1px solid #efe7c8" }}>
+                    {file}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {deleteConfirmOpen && (
+        <ConfirmDialog
+          title="Supprimer le dossier ignoré ?"
+          message={`Le dossier “${folder.folder_name}” contient ${folder.file_count} image${folder.file_count > 1 ? "s" : ""}. Cette action est définitive et supprimera ses fichiers du serveur.`}
+          confirmLabel="Supprimer définitivement"
+          onCancel={() => setDeleteConfirmOpen(false)}
+          onConfirm={handleDelete}
+        />
+      )}
+
+      {previewImage && (
+        <div onClick={() => { URL.revokeObjectURL(previewImage.url); setPreviewImage(null); }} style={{ position: "fixed", inset: 0, background: "rgba(18,18,18,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1200, padding: 20 }}>
+          <div onClick={(event) => event.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: 10, maxWidth: "90vw", maxHeight: "90vh", boxShadow: "0 18px 44px rgba(0,0,0,0.2)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 8 }}>
+              <strong style={{ fontSize: 13, color: "#2b2a22" }}>{previewImage.name}</strong>
+              <button type="button" onClick={() => { URL.revokeObjectURL(previewImage.url); setPreviewImage(null); }} style={{ border: "1px solid #d4cfb5", background: "#f7f5ef", borderRadius: 8, padding: "6px 10px", cursor: "pointer", fontWeight: 700 }}>Fermer</button>
+            </div>
+            <img src={previewImage.url} alt={previewImage.name} style={{ display: "block", maxWidth: "80vw", maxHeight: "80vh", borderRadius: 8, objectFit: "contain" }} />
+          </div>
+        </div>
+      )}
+
+      {toast && <AdminToast toast={toast} onClose={() => setToast(null)} />}
     </div>
   );
 }

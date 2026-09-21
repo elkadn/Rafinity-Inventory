@@ -10,8 +10,10 @@ from openpyxl.styles import Font
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from app.auth import hash_password, require_admin, get_current_user
 from app.db import DuplicateKeyError, get_db
+from app.routes.scans import register_code_for_user
 from app.schemas import (
     ActiveInventory,
     DaySummary,
@@ -223,6 +225,45 @@ async def delete_user_scan_as_admin(
     await db.deletions.insert_one(deletion_doc)
     await db.scans.delete_one({"_id": scan_id})
     return deletion
+
+
+class ManualUserCodeRequest(BaseModel):
+    code: str
+
+
+@router.post(
+    "/days/{inventory_date}/users/{user_id}/manual-code",
+    response_model=dict,
+)
+async def add_manual_code_for_user(
+    inventory_date: str,
+    user_id: str,
+    payload: ManualUserCodeRequest,
+    admin: UserPublic = Depends(require_admin),
+) -> dict:
+    del admin
+    db = get_db()
+    user_doc = await db.users.find_one({"_id": user_id})
+    if not user_doc:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable.")
+
+    code = payload.code.strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="Le code ne peut pas être vide.")
+
+    result = await register_code_for_user(
+        user_id=user_id,
+        username=user_doc["username"],
+        code=code,
+        method="manuel",
+        inventory_date=inventory_date,
+    )
+    return {
+        "added": result.added,
+        "reason": result.reason,
+        "user_id": user_id,
+        "inventory_date": inventory_date,
+    }
 
 
 @router.get("/days/{inventory_date}/merged", response_model=MergedDayResponse)
