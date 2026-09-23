@@ -11,6 +11,7 @@ import {
   adminListUsers,
   adminCreateUser,
   adminUpdateUser,
+  adminDeleteUser,
   adminSetInventory,
   adminClearInventory,
   adminListDeletions,
@@ -58,6 +59,32 @@ function navKeyForView(view: View): NavKey {
   if (view.kind === "day" || view.kind === "user" || view.kind === "merged")
     return "days";
   return view.kind;
+}
+
+function viewFromPathname(pathname: string): View {
+  if (pathname.endsWith("/users")) return { kind: "users" };
+  if (pathname.endsWith("/deletions")) return { kind: "deletions" };
+  if (pathname.endsWith("/inventory")) return { kind: "inventory" };
+  if (pathname.endsWith("/photos")) return { kind: "photos" };
+  if (pathname.endsWith("/scans") || pathname === "/admin") return { kind: "days" };
+  return { kind: "days" };
+}
+
+function routeForNavKey(key: NavKey): string {
+  switch (key) {
+    case "days":
+      return "/admin/scans";
+    case "photos":
+      return "/admin/photos";
+    case "inventory":
+      return "/admin/inventory";
+    case "deletions":
+      return "/admin/deletions";
+    case "users":
+      return "/admin/users";
+    default:
+      return "/admin";
+  }
 }
 
 function initials(prenom?: string, nom?: string, username?: string) {
@@ -233,7 +260,8 @@ function AdminSidebar({
 export default function AdminPage() {
   const { token, user, logout } = useAuth();
   const location = useLocation();
-  const [view, setView] = useState<View>({ kind: "days" });
+  const navigate = useNavigate();
+  const [view, setView] = useState<View>(() => viewFromPathname(location.pathname));
   const [days, setDays] = useState<DaySummaryDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeInventory, setActiveInventory] =
@@ -256,19 +284,26 @@ export default function AdminPage() {
   }, [token]);
 
   const isUnreadFolderRoute = location.pathname.startsWith("/admin/unread-folder/");
+  useEffect(() => {
+    setView(viewFromPathname(location.pathname));
+  }, [location.pathname]);
+
   const activeNav = isUnreadFolderRoute ? "folders" : navKeyForView(view);
 
   const goTo = (key: NavKey) => {
     if (key === "days") {
       setView({ kind: "days" });
       loadDays();
+      navigate(routeForNavKey(key));
       return;
     }
     if (key === "folders") {
       setView({ kind: "photos" });
+      navigate("/admin/photos");
       return;
     }
     setView({ kind: key } as View);
+    navigate(routeForNavKey(key));
   };
 
   return (
@@ -634,6 +669,12 @@ function UserScansView({
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   useEffect(() => {
+    if (!toast) return;
+    const timeout = window.setTimeout(() => setToast(null), 4000);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
+
+  useEffect(() => {
     if (!token) return;
     adminUserDayScans(token, date, userId).then(setData);
   }, [token, date, userId]);
@@ -676,7 +717,7 @@ function UserScansView({
         await refreshUserData();
         setToast({ type: "success", message: `Code ${code} ajouté pour ${data.user.username}.` });
       } else {
-        setToast({ type: "error", message: result.reason ?? "Ce code est déjà présent." });
+        setToast({ type: "error", message: `Le code "${code}" est déjà enregistré pour cet inventaire et a été ignoré.` });
       }
     } catch (error) {
       setToast({ type: "error", message: error instanceof Error ? error.message : "Ajout manuel impossible." });
@@ -1442,7 +1483,7 @@ function PhotoImportView() {
         setToast({ type: "success", message: `Code ${code} ajouté pour ${folder.username}.` });
         await loadJobs();
       } else {
-        setToast({ type: "error", message: result.reason ?? "Ce code est déjà présent." });
+        setToast({ type: "error", message: `Le code "${code}" est déjà enregistré pour cet inventaire et a été ignoré.` });
       }
     } catch (error) {
       setToast({ type: "error", message: error instanceof Error ? error.message : "Ajout manuel impossible." });
@@ -1492,9 +1533,11 @@ function PhotoImportView() {
           </div>
         )}
 
-        <PrimaryButton onClick={() => setConfirmUpload(true)} disabled={loading || files.length === 0} style={{ marginTop: 16 }}>
-          {loading ? "Envoi…" : "Lancer le traitement"}
-        </PrimaryButton>
+        <div style={{ marginTop: 16, display: "flex", justifyContent: "center" }}>
+          <PrimaryButton onClick={() => setConfirmUpload(true)} disabled={loading || files.length === 0} style={{ width: "100%", maxWidth: "100%" }}>
+            {loading ? "Envoi…" : "Lancer le traitement"}
+          </PrimaryButton>
+        </div>
       </div>
 
       <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1531,156 +1574,140 @@ function PhotoImportView() {
             )}
           </div>
         </div>
-        {displayJobs.map((job) => {
-          const isActiveJob = job.status === "queued" || job.status === "processing";
-          return (
-            <div
-              key={job.id}
-              style={{
-                ...panelStyle,
-                padding: 16,
-                background: isActiveJob ? "#edf9ee" : "#ffffff",
-                borderColor: isActiveJob ? "#bfdcc2" : "#eeece0",
-                boxShadow: isActiveJob ? "0 0 0 1px rgba(85, 146, 93, 0.08)" : "0 1px 0 rgba(43, 42, 34, 0.02)",
-              }}
-            >
-            <button
-              type="button"
-              onClick={() => toggleJob(job.id)}
-              aria-expanded={expandedJobIds.has(job.id)}
-              style={jobHeaderButtonStyle}
-            >
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, color: "#2b2a22" }}>
-                  <span style={{ ...jobChevronStyle, transform: expandedJobIds.has(job.id) ? "rotate(90deg)" : "rotate(0deg)" }}>›</span>
-                  {job.status === "completed" ? "Traitement terminé" : job.status === "failed" ? "Traitement interrompu" : <AnimatedProcessingLabel status={job.status} />}
-                </div>
-                <div style={{ color: "#8b8574", fontSize: 13, marginTop: 4 }}>
-                  {job.processed_photos}/{job.total_photos} photos traitées · Inventaire {job.inventory_date} · {formatJobDuration(job)}
-                </div>
-                {(job.status === "queued" || job.status === "processing") && (
-                  <div style={processingTrackStyle} aria-label="Traitement en cours">
-                    <div style={{ ...processingBarStyle, width: job.total_photos ? `${Math.max(8, (job.processed_photos / job.total_photos) * 100)}%` : "18%" }} />
+        {displayJobs.length === 0 ? (
+          <div style={{ ...panelStyle, textAlign: "center", color: "#685f4d", padding: "20px 16px" }}>
+            {historyDate
+              ? `Aucun historique trouvé pour la date ${historyDate}.`
+              : "Aucun historique de traitement pour le moment."}
+          </div>
+        ) : (
+          displayJobs.map((job) => {
+            const isActiveJob = job.status === "queued" || job.status === "processing";
+            return (
+              <div
+                key={job.id}
+                style={{
+                  ...panelStyle,
+                  padding: 16,
+                  background: isActiveJob ? "#edf9ee" : "#ffffff",
+                  borderColor: isActiveJob ? "#bfdcc2" : "#eeece0",
+                  boxShadow: isActiveJob ? "0 0 0 1px rgba(85, 146, 93, 0.08)" : "0 1px 0 rgba(43, 42, 34, 0.02)",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => toggleJob(job.id)}
+                  aria-expanded={expandedJobIds.has(job.id)}
+                  style={jobHeaderButtonStyle}
+                >
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, color: "#2b2a22" }}>
+                      <span style={{ ...jobChevronStyle, transform: expandedJobIds.has(job.id) ? "rotate(90deg)" : "rotate(0deg)" }}>›</span>
+                      {job.status === "completed" ? "Traitement terminé" : job.status === "failed" ? "Traitement interrompu" : <AnimatedProcessingLabel status={job.status} />}
+                    </div>
+                    <div style={{ color: "#8b8574", fontSize: 13, marginTop: 4 }}>
+                      {job.processed_photos}/{job.total_photos} photos traitées · Inventaire {job.inventory_date} · {formatJobDuration(job)}
+                    </div>
+                    {(job.status === "queued" || job.status === "processing") && (
+                      <div style={processingTrackStyle} aria-label="Traitement en cours">
+                        <div style={{ ...processingBarStyle, width: job.total_photos ? `${Math.max(8, (job.processed_photos / job.total_photos) * 100)}%` : "18%" }} />
+                      </div>
+                    )}
+                  </div>
+                  <StatusBadge tone={job.status === "completed" ? "success" : job.status === "failed" ? "danger" : "info"}>
+                    {job.status === "queued" ? "En attente" : job.status === "processing" ? "En cours" : job.status === "completed" ? "Terminé" : "Erreur"}
+                  </StatusBadge>
+                </button>
+                {job.status === "completed" && expandedJobIds.has(job.id) && (
+                  <div style={jobSummaryGridStyle}>
+                    <SummaryMetric label="Codes détectés" value={job.codes_found} />
+                    <SummaryMetric label="Ajoutés" value={job.added} tone="success" />
+                    <SummaryMetric label="Doublons ignorés" value={job.duplicates} tone="warning" />
+                    <SummaryMetric label="Photos traitées" value={`${job.processed_photos}/${job.total_photos}`} />
                   </div>
                 )}
-              </div>
-              <StatusBadge tone={job.status === "completed" ? "success" : job.status === "failed" ? "danger" : "info"}>
-                {job.status === "queued" ? "En attente" : job.status === "processing" ? "En cours" : job.status === "completed" ? "Terminé" : "Erreur"}
-              </StatusBadge>
-            </button>
-            {job.status === "completed" && expandedJobIds.has(job.id) && (
-              <div style={jobSummaryGridStyle}>
-                <SummaryMetric label="Codes détectés" value={job.codes_found} />
-                <SummaryMetric label="Ajoutés" value={job.added} tone="success" />
-                <SummaryMetric label="Doublons ignorés" value={job.duplicates} tone="warning" />
-                <SummaryMetric label="Photos traitées" value={`${job.processed_photos}/${job.total_photos}`} />
-              </div>
-            )}
-            {job.user_results?.length > 0 && expandedJobIds.has(job.id) && (
-              <div style={userPhotoResultsStyle}>
-                <div style={userPhotoResultsTitleStyle}>Résultats par utilisateur</div>
-                <div style={userPhotoResultsGridStyle}>
-                  {job.user_results.map((result) => (
-                    <div key={result.user_id} style={userPhotoResultStyle}>
-                      <div style={{ fontWeight: 800, color: "#2b2a22" }}>{result.username}</div>
-                      <div style={userPhotoResultMetaStyle}>
-                        {result.processed_photos}/{result.total_photos} photos · {result.codes_found} codes détectés
-                      </div>
-                      {result.codes.length > 0 && (
-                        <CompactCodeChips codes={result.codes} />
-                      )}
-                      {(result.unread_folders ?? []).length > 0 && (
-                        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-                          {result.unread_folders.map((folder, folderIndex) => {
-                            const previewImage = folder.files.slice(0, 1)[0];
-                            if (!previewImage) return null;
-                            return (
-                              <div key={`${result.user_id}-${folder.folder_key || folder.folder_name}-${folderIndex}`} style={{ border: "1px solid #eadfba", borderRadius: 10, background: "#fffaf1", padding: 8 }}>
-                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                                  <button
-                                    type="button"
-                                    onClick={() => navigate(`/admin/unread-folder/${encodeURIComponent(folder.folder_key)}`)}
-                                    style={{
-                                      background: "transparent",
-                                      border: "none",
-                                      padding: 0,
-                                      color: "#2b2a22",
-                                      fontWeight: 800,
-                                      fontSize: 12.5,
-                                      cursor: "pointer",
-                                      textAlign: "left",
-                                    }}
-                                  >
-                                    {folder.folder_name}
-                                  </button>
-                                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                                    <span style={{ fontSize: 11, color: "#7a6d44" }}>{folder.file_count} image(s)</span>
-                                    <button
-                                      type="button"
-                                      onClick={() => setConfirmDeleteFolder(folder)}
-                                      style={{
-                                        border: "1px solid #d7c38c",
-                                        background: "#fff8e8",
-                                        color: "#6e5630",
-                                        borderRadius: 8,
-                                        padding: "4px 8px",
-                                        fontSize: 11,
-                                        fontWeight: 700,
-                                        cursor: "pointer",
-                                      }}
-                                    >
-                                      Supprimer
-                                    </button>
+                {job.user_results?.length > 0 && expandedJobIds.has(job.id) && (
+                  <div style={userPhotoResultsStyle}>
+                    <div style={userPhotoResultsTitleStyle}>Résultats par utilisateur</div>
+                    <div style={userPhotoResultsGridStyle}>
+                      {job.user_results.map((result) => (
+                        <div key={result.user_id} style={userPhotoResultStyle}>
+                          <div style={{ fontWeight: 800, color: "#2b2a22", marginBottom: 8 }}>{result.username}</div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", fontSize: 12, color: "#524d42" }}>
+                            <span style={{ background: "#f4f1e7", border: "1px solid #e8dfbf", borderRadius: 999, padding: "4px 8px", fontWeight: 700 }}>Images: {result.processed_photos}/{result.total_photos}</span>
+                            <span style={{ background: "#eef4ff", border: "1px solid #cad9f8", borderRadius: 999, padding: "4px 8px", fontWeight: 700 }}>Trouvés: {result.codes_found}</span>
+                            <span style={{ background: "#edf9ee", border: "1px solid #cce5cf", borderRadius: 999, padding: "4px 8px", fontWeight: 700 }}>Ajoutés: {result.added}</span>
+                            <span style={{ background: "#fff7e8", border: "1px solid #f0d7a5", borderRadius: 999, padding: "4px 8px", fontWeight: 700 }}>Doublons: {result.duplicates}</span>
+                          </div>
+
+                          {result.codes.length > 0 && (
+                            <div style={{ marginTop: 10 }}>
+                              <CompactCodeChips codes={result.codes} />
+                            </div>
+                          )}
+
+                          {(result.unread_folders ?? []).length > 0 && (
+                            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                              {result.unread_folders.map((folder, folderIndex) => {
+                                if (!folder.files.length) return null;
+                                return (
+                                  <div key={`${result.user_id}-${folder.folder_key || folder.folder_name}-${folderIndex}`} style={{ border: "1px solid #e9a39a", borderRadius: 10, background: "#fff1ee", padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                                    <div style={{ color: "#2b2a22", fontWeight: 800, fontSize: 12.5, lineHeight: 1.4, wordBreak: "break-word" }}>{folder.folder_name}</div>
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                        <span style={{ background: "#d92d20", color: "#fff", borderRadius: 999, padding: "4px 8px", fontSize: 10.5, fontWeight: 800, letterSpacing: 0.2 }}>Dossier non lu</span>
+                                      </div>
+                                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                        <span style={{ fontSize: 11, color: "#6e2c2c", fontWeight: 700 }}>{folder.file_count} image(s)</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => navigate(`/admin/unread-folder/${encodeURIComponent(folder.folder_key)}`)}
+                                          style={{
+                                            border: "1px solid #c8d7c2",
+                                            background: "#eef9ee",
+                                            color: "#214f2c",
+                                            borderRadius: 8,
+                                            padding: "5px 10px",
+                                            fontSize: 11,
+                                            fontWeight: 800,
+                                            cursor: "pointer",
+                                          }}
+                                        >
+                                          Voir
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => setConfirmDeleteFolder(folder)}
+                                          style={{
+                                            border: "1px solid #d9a39a",
+                                            background: "#fff0ee",
+                                            color: "#8b2e2a",
+                                            borderRadius: 8,
+                                            padding: "4px 8px",
+                                            fontSize: 11,
+                                            fontWeight: 700,
+                                            cursor: "pointer",
+                                          }}
+                                        >
+                                          Supprimer
+                                        </button>
+                                      </div>
+                                    </div>
                                   </div>
-                                </div>
-                                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
-                                  {folder.files.slice(0, 6).map((file) => (
-                                    <button
-                                      key={file}
-                                      type="button"
-                                      onClick={() => void openUnreadPhotoPreview(folder, file)}
-                                      style={{
-                                        display: "inline-flex",
-                                        alignItems: "center",
-                                        justifyContent: "center",
-                                        minWidth: 52,
-                                        height: 52,
-                                        borderRadius: 8,
-                                        background: "#ffffff",
-                                        border: "1px solid #eadfba",
-                                        color: "#2b2a22",
-                                        fontSize: 10,
-                                        fontWeight: 700,
-                                        padding: 4,
-                                        cursor: "pointer",
-                                        overflow: "hidden",
-                                        wordBreak: "break-all",
-                                      }}
-                                      title={file}
-                                    >
-                                      {file}
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                            );
-                          })}
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
-                      )}
-                      <div style={userPhotoResultStatsStyle}>
-                        <span style={{ color: "#3b7d2a" }}>{result.added} ajoutés</span>
-                        <span style={{ color: "#a15c08" }}>{result.duplicates} doublons</span>
-                        {result.skipped > 0 && <span>{result.skipped} ignorées</span>}
-                      </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  </div>
+                )}
+                {job.status === "failed" && job.error && expandedJobIds.has(job.id) && <div style={jobErrorStyle}>{job.error}</div>}
               </div>
-            )}
-            {job.status === "failed" && job.error && expandedJobIds.has(job.id) && <div style={jobErrorStyle}>{job.error}</div>}
-          </div>
-          );
-        })}
+            );
+          })
+        )}
       </div>
       {previewImage && (
         <div
@@ -1752,11 +1779,24 @@ export function UnreadFolderDetailPage() {
   const { folderKey } = useParams();
   const [folder, setFolder] = useState<UnreadPhotoFolderDto | null>(null);
   const [manualCode, setManualCode] = useState("");
+  const [previewManualCode, setPreviewManualCode] = useState("");
   const [images, setImages] = useState<{ file: string; url: string }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMoreImages, setLoadingMoreImages] = useState(false);
+  const [loadedImageCount, setLoadedImageCount] = useState(0);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [previewImage, setPreviewImage] = useState<{ url: string; name: string; folderKey: string } | null>(null);
+  const [previewImage, setPreviewImage] = useState<{ url: string; name: string; folderKey: string; index: number } | null>(null);
+  const [previewZoom, setPreviewZoom] = useState(1);
+  const [previewPan, setPreviewPan] = useState({ x: 0, y: 0 });
+  const [isDraggingPreview, setIsDraggingPreview] = useState(false);
+  const previewDragRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timeout = window.setTimeout(() => setToast(null), 4000);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
 
   useEffect(() => {
     if (!token || !folderKey) return;
@@ -1779,24 +1819,64 @@ export function UnreadFolderDetailPage() {
     })();
   }, [token, folderKey, navigate]);
 
+  const fetchUnreadImageUrl = async (file: string) => {
+    if (!token || !folder) throw new Error("Session invalide.");
+    const apiBase = import.meta.env.VITE_API_BASE_URL || "/api";
+    const url = `${apiBase}/admin/photo-jobs/unread/${encodeURIComponent(folder.folder_key)}/files/${encodeURIComponent(file)}`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error(`${res.status}`);
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  };
+
+  const loadMoreUnreadImages = async (count = 12) => {
+    if (!token || !folder || loadedImageCount >= folder.files.length) return;
+    setLoadingMoreImages(true);
+    try {
+      const start = loadedImageCount;
+      const end = Math.min(start + count, folder.files.length);
+      const batch = folder.files.slice(start, end);
+      const loaded = await Promise.allSettled(
+        batch.map(async (file) => ({ file, url: await fetchUnreadImageUrl(file) })),
+      );
+      const nextImages = loaded.flatMap((item) => (item.status === "fulfilled" ? [item.value] : []));
+      setImages((current) => [...current, ...nextImages]);
+      setLoadedImageCount(end);
+      if (nextImages.length === 0) {
+        setToast({ type: "error", message: "Aucune image n’a pu être chargée depuis ce dossier." });
+      }
+    } catch (error) {
+      setToast({
+        type: "error",
+        message: error instanceof Error ? `Chargement du dossier: ${error.message}` : "Impossible de charger les images.",
+      });
+    } finally {
+      setLoadingMoreImages(false);
+    }
+  };
+
   useEffect(() => {
     if (!token || !folder) return;
 
     let cancelled = false;
     void (async () => {
       setLoading(true);
+      setImages([]);
+      setLoadedImageCount(0);
       try {
-        const apiBase = import.meta.env.VITE_API_BASE_URL || "/api";
-        const loaded = await Promise.all(
-          folder.files.map(async (file) => {
-            const url = `${apiBase}/admin/photo-jobs/unread/${encodeURIComponent(folder.folder_key)}/files/${encodeURIComponent(file)}`;
-            const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-            if (!res.ok) throw new Error(`${res.status}`);
-            const blob = await res.blob();
-            return { file, url: URL.createObjectURL(blob) };
-          }),
+        const initialBatchSize = Math.min(12, folder.files.length);
+        if (initialBatchSize === 0) {
+          if (!cancelled) setLoading(false);
+          return;
+        }
+        const initialBatch = folder.files.slice(0, initialBatchSize);
+        const loaded = await Promise.allSettled(
+          initialBatch.map(async (file) => ({ file, url: await fetchUnreadImageUrl(file) })),
         );
-        if (!cancelled) setImages(loaded);
+        if (cancelled) return;
+        const nextImages = loaded.flatMap((item) => (item.status === "fulfilled" ? [item.value] : []));
+        setImages(nextImages);
+        setLoadedImageCount(initialBatchSize);
       } catch (error) {
         if (!cancelled) {
           setToast({
@@ -1811,7 +1891,6 @@ export function UnreadFolderDetailPage() {
 
     return () => {
       cancelled = true;
-      images.forEach((item) => URL.revokeObjectURL(item.url));
     };
   }, [token, folder]);
 
@@ -1821,10 +1900,66 @@ export function UnreadFolderDetailPage() {
     try {
       await adminDeleteUnreadPhotoFolder(token, folder.folder_key);
       setToast({ type: "success", message: "Le dossier a été supprimé." });
-      navigate("/admin", { replace: true });
+      navigate("/admin/photos", { replace: true });
     } catch (error) {
       setToast({ type: "error", message: error instanceof Error ? error.message : "Suppression impossible." });
     }
+  };
+
+  const openPreviewImage = async (index: number) => {
+    if (!folder || !token) return;
+    const file = folder.files[index];
+    if (!file) return;
+    try {
+      const nextUrl = await fetchUnreadImageUrl(file);
+      if (previewImage) {
+        URL.revokeObjectURL(previewImage.url);
+      }
+      setPreviewZoom(1);
+      setPreviewPan({ x: 0, y: 0 });
+      setIsDraggingPreview(false);
+      setPreviewImage({ url: nextUrl, name: file, folderKey: folder.folder_key, index });
+    } catch (error) {
+      setToast({ type: "error", message: error instanceof Error ? `Impossible d’ouvrir ${file}: ${error.message}` : `Impossible d’ouvrir ${file}.` });
+    }
+  };
+
+  const movePreviewImage = async (direction: -1 | 1) => {
+    if (!folder || !previewImage) return;
+    const nextIndex = previewImage.index + direction;
+    if (nextIndex < 0 || nextIndex >= folder.files.length) return;
+    await openPreviewImage(nextIndex);
+  };
+
+  const handlePreviewPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!previewImage) return;
+    previewDragRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: previewPan.x,
+      originY: previewPan.y,
+    };
+    setIsDraggingPreview(true);
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handlePreviewPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!previewDragRef.current || !previewImage) return;
+    const dx = event.clientX - previewDragRef.current.startX;
+    const dy = event.clientY - previewDragRef.current.startY;
+    setPreviewPan({
+      x: previewDragRef.current.originX + dx / previewZoom,
+      y: previewDragRef.current.originY + dy / previewZoom,
+    });
+  };
+
+  const handlePreviewPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (previewDragRef.current) {
+      previewDragRef.current = null;
+    }
+    setIsDraggingPreview(false);
+    event.currentTarget.releasePointerCapture(event.pointerId);
   };
 
   const handleAddManualCode = async () => {
@@ -1844,7 +1979,31 @@ export function UnreadFolderDetailPage() {
         setManualCode("");
         setToast({ type: "success", message: `Code ${code} ajouté pour ${folder.username}.` });
       } else {
-        setToast({ type: "error", message: result.reason ?? "Ce code est déjà présent." });
+        setToast({ type: "error", message: `Le code "${code}" est déjà enregistré pour cet inventaire et a été ignoré.` });
+      }
+    } catch (error) {
+      setToast({ type: "error", message: error instanceof Error ? error.message : "Ajout manuel impossible." });
+    }
+  };
+
+  const handleAddManualCodeFromPreview = async () => {
+    if (!token || !folder) return;
+    const code = previewManualCode.trim();
+    if (!code) {
+      setToast({ type: "error", message: "Saisis un code avant de l’ajouter." });
+      return;
+    }
+    try {
+      const result = await adminAddManualCodeToUnreadFolder(token, folder.folder_key, {
+        user_id: folder.user_id,
+        code,
+        inventory_date: folder.inventory_date,
+      });
+      if (result.added) {
+        setPreviewManualCode("");
+        setToast({ type: "success", message: `Code ${code} ajouté pour ${folder.username}.` });
+      } else {
+        setToast({ type: "error", message: `Le code "${code}" est déjà enregistré pour cet inventaire et a été ignoré.` });
       }
     } catch (error) {
       setToast({ type: "error", message: error instanceof Error ? error.message : "Ajout manuel impossible." });
@@ -1853,12 +2012,10 @@ export function UnreadFolderDetailPage() {
 
   const handleSidebarNavigate = (key: NavKey) => {
     if (key === "folders") {
-      navigate("/admin");
+      navigate("/admin/photos");
       return;
     }
-    if (key === "photos" || key === "days" || key === "inventory" || key === "deletions" || key === "users") {
-      navigate("/admin");
-    }
+    navigate(routeForNavKey(key));
   };
   const sidebarActiveNav: NavKey = location.pathname.startsWith("/admin/unread-folder/") ? "folders" : "photos";
 
@@ -1890,7 +2047,7 @@ export function UnreadFolderDetailPage() {
       />
 
       <div style={{ display: "flex", flexDirection: "column", gap: 18, width: "100%", padding: 24 }}>
-        <BackButton onClick={() => navigate("/admin")} label="Retour aux traitements" />
+        <BackButton onClick={() => navigate("/admin/photos")} label="Retour aux traitements" />
 
         <div style={headerRowStyle}>
           <PageHeader title={folder.folder_name} subtitle={`${folder.username} • Inventaire ${folder.inventory_date}`} noMargin />
@@ -1923,28 +2080,56 @@ export function UnreadFolderDetailPage() {
           {loading ? (
             <div style={{ color: "#715f34", fontWeight: 700, padding: "16px 0" }}>Chargement des images…</div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
-              {images.map(({ file, url }, index) => (
-                <div key={`${folder.folder_key}-${file}-${index}`} style={{ border: "1px solid #ebdfb8", borderRadius: 12, background: "#fffdf8", overflow: "hidden" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 12.5, color: "#5f583f", fontWeight: 700 }}>
+                  Images affichées : {Math.min(images.length, folder.files.length)}/{folder.files.length}
+                </span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
+                {images.map(({ file, url }, index) => (
+                  <div key={`${folder.folder_key}-${file}-${index}`} style={{ border: "1px solid #ebdfb8", borderRadius: 12, background: "#fffdf8", overflow: "hidden" }}>
+                    <button
+                      type="button"
+                      onClick={() => void openPreviewImage(folder.files.indexOf(file))}
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        border: "none",
+                        background: "#f5f0df",
+                        padding: 0,
+                        cursor: "pointer",
+                      }}
+                    >
+                      <img src={url} alt={file} style={{ display: "block", width: "100%", height: 240, objectFit: "contain", background: "#f5f0df" }} />
+                    </button>
+                    <div style={{ padding: "8px 10px", fontSize: 11.5, color: "#4d483a", overflowWrap: "anywhere", borderTop: "1px solid #efe7c8" }}>
+                      {file}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {loadedImageCount < folder.files.length && (
+                <div style={{ display: "flex", justifyContent: "center" }}>
                   <button
                     type="button"
-                    onClick={() => setPreviewImage({ url, name: file, folderKey: folder.folder_key })}
+                    onClick={() => void loadMoreUnreadImages(12)}
+                    disabled={loadingMoreImages}
                     style={{
-                      display: "block",
-                      width: "100%",
-                      border: "none",
-                      background: "#f5f0df",
-                      padding: 0,
-                      cursor: "pointer",
+                      border: "1px solid #c9c0a0",
+                      background: loadingMoreImages ? "#efe7cb" : "#f7f3e6",
+                      color: "#534d3d",
+                      borderRadius: 10,
+                      padding: "10px 16px",
+                      fontWeight: 700,
+                      cursor: loadingMoreImages ? "default" : "pointer",
                     }}
                   >
-                    <img src={url} alt={file} style={{ display: "block", width: "100%", height: 240, objectFit: "contain", background: "#f5f0df" }} />
+                    {loadingMoreImages ? "Chargement des images…" : `Afficher plus (${Math.min(12, folder.files.length - loadedImageCount)} images)`}
                   </button>
-                  <div style={{ padding: "8px 10px", fontSize: 11.5, color: "#4d483a", overflowWrap: "anywhere", borderTop: "1px solid #efe7c8" }}>
-                    {file}
-                  </div>
                 </div>
-              ))}
+              )}
             </div>
           )}
         </div>
@@ -1961,13 +2146,102 @@ export function UnreadFolderDetailPage() {
       )}
 
       {previewImage && (
-        <div onClick={() => { URL.revokeObjectURL(previewImage.url); setPreviewImage(null); }} style={{ position: "fixed", inset: 0, background: "rgba(18,18,18,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1200, padding: 20 }}>
-          <div onClick={(event) => event.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: 10, maxWidth: "90vw", maxHeight: "90vh", boxShadow: "0 18px 44px rgba(0,0,0,0.2)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 8 }}>
-              <strong style={{ fontSize: 13, color: "#2b2a22" }}>{previewImage.name}</strong>
-              <button type="button" onClick={() => { URL.revokeObjectURL(previewImage.url); setPreviewImage(null); }} style={{ border: "1px solid #d4cfb5", background: "#f7f5ef", borderRadius: 8, padding: "6px 10px", cursor: "pointer", fontWeight: 700 }}>Fermer</button>
+        <div onClick={() => { URL.revokeObjectURL(previewImage.url); setPreviewImage(null); setPreviewZoom(1); setPreviewPan({ x: 0, y: 0 }); setIsDraggingPreview(false); }} style={{ position: "fixed", inset: 0, background: "rgba(18,18,18,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1200, padding: 20 }}>
+          <div onClick={(event) => event.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: 10, width: "min(1040px, 90vw)", maxHeight: "90vh", boxShadow: "0 18px 44px rgba(0,0,0,0.2)", display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, minHeight: 40, width: "100%", flexWrap: "nowrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flexShrink: 1, overflow: "hidden" }}>
+                <strong style={{ fontSize: 13, color: "#2b2a22", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{previewImage.name}</strong>
+                <span style={{ fontSize: 12, color: "#635d4f", background: "#f3efdf", border: "1px solid #e4d9ad", borderRadius: 999, padding: "4px 8px", fontWeight: 800, whiteSpace: "nowrap" }}>
+                  {previewImage.index + 1}/{folder?.files.length ?? previewImage.index + 1}
+                </span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "nowrap", justifyContent: "flex-end", flexShrink: 0 }}>
+                <button
+                  type="button"
+                  onClick={() => setPreviewZoom((current) => Math.max(0.5, Number((current - 0.25).toFixed(2))))}
+                  style={{ border: "1px solid #d4cfb5", background: "#f7f5ef", borderRadius: 8, padding: "6px 10px", cursor: "pointer", fontWeight: 700 }}
+                >
+                  −
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewZoom((current) => Math.min(3, Number((current + 0.25).toFixed(2))))}
+                  style={{ border: "1px solid #d4cfb5", background: "#f7f5ef", borderRadius: 8, padding: "6px 10px", cursor: "pointer", fontWeight: 700 }}
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setPreviewZoom(1); setPreviewPan({ x: 0, y: 0 }); }}
+                  style={{ border: "1px solid #d4cfb5", background: "#f7f5ef", borderRadius: 8, padding: "6px 10px", cursor: "pointer", fontWeight: 700 }}
+                >
+                  {`${Math.round(previewZoom * 100)}%`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void movePreviewImage(-1)}
+                  disabled={previewImage.index === 0}
+                  style={{ border: "1px solid #d4cfb5", background: previewImage.index === 0 ? "#f1efe7" : "#f7f5ef", borderRadius: 8, padding: "6px 10px", cursor: previewImage.index === 0 ? "default" : "pointer", fontWeight: 700, opacity: previewImage.index === 0 ? 0.6 : 1 }}
+                >
+                  Précédent
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void movePreviewImage(1)}
+                  disabled={previewImage.index >= (folder?.files.length ?? 1) - 1}
+                  style={{ border: "1px solid #d4cfb5", background: previewImage.index >= (folder?.files.length ?? 1) - 1 ? "#f1efe7" : "#f7f5ef", borderRadius: 8, padding: "6px 10px", cursor: previewImage.index >= (folder?.files.length ?? 1) - 1 ? "default" : "pointer", fontWeight: 700, opacity: previewImage.index >= (folder?.files.length ?? 1) - 1 ? 0.6 : 1 }}
+                >
+                  Suivant
+                </button>
+                <button type="button" onClick={() => { URL.revokeObjectURL(previewImage.url); setPreviewImage(null); setPreviewZoom(1); setPreviewPan({ x: 0, y: 0 }); setIsDraggingPreview(false); }} style={{ border: "1px solid #d4cfb5", background: "#f7f5ef", borderRadius: 8, padding: "6px 10px", cursor: "pointer", fontWeight: 700 }}>Fermer</button>
+              </div>
             </div>
-            <img src={previewImage.url} alt={previewImage.name} style={{ display: "block", maxWidth: "80vw", maxHeight: "80vh", borderRadius: 8, objectFit: "contain" }} />
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "nowrap", width: "100%", minHeight: 42 }}>
+              <input
+                value={previewManualCode}
+                onChange={(event) => setPreviewManualCode(event.target.value)}
+                placeholder="Ajouter un code manuel"
+                className="admin-input"
+                style={{ ...inputStyle, minWidth: 0, flex: 1, width: "100%" }}
+              />
+              <PrimaryButton onClick={() => void handleAddManualCodeFromPreview()}>Ajouter</PrimaryButton>
+            </div>
+            <div
+              onPointerDown={handlePreviewPointerDown}
+              onPointerMove={handlePreviewPointerMove}
+              onPointerUp={handlePreviewPointerUp}
+              onPointerLeave={handlePreviewPointerUp}
+              style={{
+                overflow: "hidden",
+                maxWidth: "80vw",
+                maxHeight: "80vh",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "#f7f5ef",
+                borderRadius: 10,
+                padding: 10,
+                cursor: isDraggingPreview ? "grabbing" : "grab",
+                touchAction: "none",
+                userSelect: "none",
+              }}
+            >
+              <img
+                src={previewImage.url}
+                alt={previewImage.name}
+                style={{
+                  display: "block",
+                  maxWidth: "100%",
+                  maxHeight: "80vh",
+                  borderRadius: 8,
+                  objectFit: "contain",
+                  transform: `translate(${previewPan.x}px, ${previewPan.y}px) scale(${previewZoom})`,
+                  transformOrigin: "center center",
+                  transition: isDraggingPreview ? "none" : "transform 0.15s ease",
+                  pointerEvents: "none",
+                }}
+              />
+            </div>
           </div>
         </div>
       )}
@@ -2402,6 +2676,9 @@ function UserManagementView() {
   const { token, user } = useAuth();
   const [users, setUsers] = useState<AuthUserDto[]>([]);
   const [passwordDrafts, setPasswordDrafts] = useState<Record<string, string>>({});
+  const [passwordEditors, setPasswordEditors] = useState<Record<string, boolean>>({});
+  const [showCreatePassword, setShowCreatePassword] = useState(false);
+  const [pendingDeleteUser, setPendingDeleteUser] = useState<AuthUserDto | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [form, setForm] = useState({
     username: "",
@@ -2485,12 +2762,33 @@ function UserManagementView() {
     try {
       await adminUpdateUser(token, u.id, { password: nextPassword });
       setPasswordDrafts((current) => ({ ...current, [u.id]: "" }));
+      setPasswordEditors((current) => ({ ...current, [u.id]: false }));
       showToast("success", `Mot de passe mis à jour pour ${u.username}.`);
     } catch (err) {
       showToast(
         "error",
         err instanceof Error ? err.message : "Erreur lors du changement de mot de passe.",
       );
+    }
+  };
+
+  const deleteUser = async (u: AuthUserDto) => {
+    if (!token) return;
+    if (u.id === user?.id) {
+      showToast("error", "L'administrateur courant ne peut pas être supprimé.");
+      return;
+    }
+    try {
+      await adminDeleteUser(token, u.id);
+      setUsers((current) => current.filter((item) => item.id !== u.id));
+      showToast("success", `L'utilisateur ${u.username} a été supprimé.`);
+    } catch (err) {
+      const rawMessage = err instanceof Error ? err.message : "";
+      const message =
+        rawMessage && rawMessage !== "500"
+          ? rawMessage
+          : "Suppression impossible : cet utilisateur est encore associé à des données (scans, historique, traitements...).";
+      showToast("error", message);
     }
   };
 
@@ -2522,13 +2820,34 @@ function UserManagementView() {
             />
           </FieldGroup>
           <FieldGroup label="Mot de passe">
-            <input
-              className="admin-input"
-              type="password"
-              value={form.password}
-              onChange={(e) => setForm({ ...form, password: e.target.value })}
-              style={inputStyle}
-            />
+            <div style={{ position: "relative" }}>
+              <input
+                className="admin-input"
+                type={showCreatePassword ? "text" : "password"}
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+                style={{ ...inputStyle, paddingRight: 42 }}
+              />
+              <button
+                type="button"
+                aria-label={showCreatePassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                onClick={() => setShowCreatePassword((current) => !current)}
+                style={{
+                  position: "absolute",
+                  top: "50%",
+                  right: 10,
+                  transform: "translateY(-50%)",
+                  border: "none",
+                  background: "transparent",
+                  cursor: "pointer",
+                  fontSize: 16,
+                  color: "#5d5849",
+                  lineHeight: 1,
+                }}
+              >
+                {showCreatePassword ? "🙈" : "👁️"}
+              </button>
+            </div>
           </FieldGroup>
           <FieldGroup label="Prénom">
             <input
@@ -2562,18 +2881,26 @@ function UserManagementView() {
               <option value="admin">Admin</option>
             </select>
           </FieldGroup>
-          <FieldGroup label="IP du poste (optionnel)">
-            <input
-              className="admin-input"
-              value={form.ip_poste}
-              onChange={(e) => setForm({ ...form, ip_poste: e.target.value })}
-              style={inputStyle}
-            />
-          </FieldGroup>
         </div>
         <PrimaryButton onClick={handleCreate} style={{ marginTop: 16 }}>
           Créer l'utilisateur
         </PrimaryButton>
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+        <div
+          style={{
+            background: "#f4f1e9",
+            border: "1px solid #e6e0d8",
+            borderRadius: 999,
+            padding: "8px 12px",
+            fontWeight: 700,
+            color: "#2b2a22",
+            fontSize: 13,
+          }}
+        >
+          {users.length} utilisateur{users.length > 1 ? "s" : ""}
+        </div>
       </div>
 
       <div className="admin-users-grid">
@@ -2614,51 +2941,89 @@ function UserManagementView() {
                     </span>
                   )}
                 </div>
-                <div
+                {passwordEditors[u.id] && (
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      marginTop: 10,
+                      alignItems: "center",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <input
+                      className="admin-input"
+                      type="password"
+                      placeholder="Nouveau mot de passe"
+                      value={passwordDrafts[u.id] ?? ""}
+                      onChange={(e) =>
+                        setPasswordDrafts((current) => ({
+                          ...current,
+                          [u.id]: e.target.value,
+                        }))
+                      }
+                      style={{
+                        ...inputStyle,
+                        width: 200,
+                        minWidth: 160,
+                      }}
+                    />
+                    <PrimaryButton onClick={() => changePassword(u)} style={{ padding: "8px 12px" }}>
+                      Enregistrer
+                    </PrimaryButton>
+                    <GhostButton
+                      onClick={() => {
+                        setPasswordEditors((current) => ({ ...current, [u.id]: false }));
+                        setPasswordDrafts((current) => ({ ...current, [u.id]: "" }));
+                      }}
+                      style={{ padding: "8px 12px" }}
+                    >
+                      Annuler
+                    </GhostButton>
+                  </div>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                {!passwordEditors[u.id] && (
+                  <PrimaryButton
+                    onClick={() => setPasswordEditors((current) => ({ ...current, [u.id]: true }))}
+                    style={{ padding: "8px 12px" }}
+                  >
+                    Modifier le mot de passe
+                  </PrimaryButton>
+                )}
+                <GhostButton
+                  onClick={() => toggleStatus(u)}
+                  disabled={isCurrentAdmin}
                   style={{
-                    display: "flex",
-                    gap: 8,
-                    marginTop: 10,
-                    alignItems: "center",
-                    flexWrap: "wrap",
+                    opacity: isCurrentAdmin ? 0.45 : 1,
+                    cursor: isCurrentAdmin ? "not-allowed" : "pointer",
                   }}
                 >
-                  <input
-                    className="admin-input"
-                    type="password"
-                    placeholder="Nouveau mot de passe"
-                    value={passwordDrafts[u.id] ?? ""}
-                    onChange={(e) =>
-                      setPasswordDrafts((current) => ({
-                        ...current,
-                        [u.id]: e.target.value,
-                      }))
-                    }
-                    style={{
-                      ...inputStyle,
-                      width: 200,
-                      minWidth: 160,
-                    }}
-                  />
-                  <PrimaryButton onClick={() => changePassword(u)} style={{ padding: "8px 12px" }}>
-                    Changer le mot de passe
-                  </PrimaryButton>
-                </div>
+                  {u.statut === "actif" ? "Désactiver" : "Activer"}
+                </GhostButton>
+                <DangerButton onClick={() => setPendingDeleteUser(u)}>Supprimer</DangerButton>
               </div>
-              <GhostButton
-                onClick={() => toggleStatus(u)}
-                disabled={isCurrentAdmin}
-                style={{
-                  opacity: isCurrentAdmin ? 0.45 : 1,
-                  cursor: isCurrentAdmin ? "not-allowed" : "pointer",
-                }}
-              >
-                {u.statut === "actif" ? "Désactiver" : "Activer"}
-              </GhostButton>
             </div>
           );
         })}
       </div>
+
+      {pendingDeleteUser && (
+        <ConfirmDialog
+          title="Supprimer cet utilisateur ?"
+          message={`Cette action est irréversible. L’utilisateur ${pendingDeleteUser.username} sera supprimé définitivement.`}
+          confirmLabel="Supprimer définitivement"
+          onCancel={() => setPendingDeleteUser(null)}
+          onConfirm={async () => {
+            const userToDelete = pendingDeleteUser;
+            setPendingDeleteUser(null);
+            if (userToDelete) {
+              await deleteUser(userToDelete);
+            }
+          }}
+        />
+      )}
 
       {toast && (
         <div
@@ -3609,6 +3974,7 @@ const userRowStyle: CSSProperties = {
 const primaryBtnStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
+  justifyContent: "center",
   gap: 7,
   background: "linear-gradient(135deg, #bdb184, #a89968)",
   color: "#2b2a22",
@@ -3620,6 +3986,7 @@ const primaryBtnStyle: CSSProperties = {
   cursor: "pointer",
   boxShadow: "0 6px 16px rgba(189, 177, 132, 0.3)",
   whiteSpace: "nowrap",
+  textAlign: "center",
 };
 
 const ghostBtnStyle: CSSProperties = {

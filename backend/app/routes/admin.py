@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import inspect
 import io
 import time
 from typing import Optional
@@ -496,3 +497,67 @@ async def update_user(
         date_creation=doc["date_creation"],
         statut=doc["statut"],
     )
+
+
+@router.delete("/users/{user_id}", response_model=dict)
+async def delete_user(
+    user_id: str,
+    admin: UserPublic = Depends(require_admin),
+) -> dict:
+    db = get_db()
+
+    admin_id = getattr(admin, "id", None)
+    if admin_id is None and isinstance(admin, dict):
+        admin_id = admin.get("id")
+
+    if user_id == admin_id:
+        raise HTTPException(
+            status_code=403,
+            detail="L'administrateur courant ne peut pas être supprimé.",
+        )
+
+    user_doc_result = db.users.find_one({"_id": user_id})
+    user_doc = (
+        await user_doc_result
+        if inspect.isawaitable(user_doc_result)
+        else user_doc_result
+    )
+    if not user_doc:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable.")
+
+    blockers: list[str] = []
+    for collection_name, collection in (
+        ("codes scannés", db.scans),
+        ("historique de suppressions", db.deletions),
+        ("traitements photo", db.photo_jobs),
+        ("traitements vidéo", db.video_jobs),
+    ):
+        count_result = collection.count_documents({"user_id": user_id})
+        count = (
+            await count_result if inspect.isawaitable(count_result) else count_result
+        )
+        if count:
+            blockers.append(collection_name)
+
+    if blockers:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Suppression impossible : cet utilisateur a déjà des données associées "
+                f"({', '.join(blockers)})."
+            ),
+        )
+
+    delete_method = getattr(db, "delete_one", None) or getattr(
+        db.users, "delete_one", None
+    )
+    if delete_method is None:
+        raise RuntimeError(
+            "Aucune méthode de suppression disponible pour cet utilisateur."
+        )
+
+    delete_result = delete_method({"_id": user_id})
+    if inspect.isawaitable(delete_result):
+        await delete_result
+
+    return {"deleted": True, "user_id": user_id}

@@ -247,6 +247,17 @@ export async function adminUpdateUser(
   return handle(res);
 }
 
+export async function adminDeleteUser(
+  token: string,
+  userId: string,
+): Promise<{ deleted: boolean; user_id: string }> {
+  const res = await fetch(`${API_BASE}/admin/users/${userId}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  return handle(res);
+}
+
 export interface UnreadPhotoFolderDto {
   folder_key: string;
   job_id: string;

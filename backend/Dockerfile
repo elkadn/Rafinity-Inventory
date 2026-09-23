@@ -8,6 +8,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+RUN mkdir -p /app/photo_jobs
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
