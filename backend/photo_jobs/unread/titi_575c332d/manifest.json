@@ -1,0 +1,364 @@
+{
+  "files": [
+    {
+      "created_at": 1790162786.1745896,
+      "file_name": "000003.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000003.jpg"
+    },
+    {
+      "created_at": 1790162786.3427346,
+      "file_name": "000004.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000004.jpg"
+    },
+    {
+      "created_at": 1790162786.479976,
+      "file_name": "000005.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000005.jpg"
+    },
+    {
+      "created_at": 1790162786.5163925,
+      "file_name": "000008.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000008.jpg"
+    },
+    {
+      "created_at": 1790162786.6924021,
+      "file_name": "000001.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000001.jpg"
+    },
+    {
+      "created_at": 1790162787.153102,
+      "file_name": "000007.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000007.jpg"
+    },
+    {
+      "created_at": 1790162788.071597,
+      "file_name": "000002.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000002.jpg"
+    },
+    {
+      "created_at": 1790162791.0749955,
+      "file_name": "000009.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000009.jpg"
+    },
+    {
+      "created_at": 1790162792.1757905,
+      "file_name": "000016.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000016.jpg"
+    },
+    {
+      "created_at": 1790162793.1383376,
+      "file_name": "000010.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000010.jpg"
+    },
+    {
+      "created_at": 1790162794.6206486,
+      "file_name": "000015.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000015.jpg"
+    },
+    {
+      "created_at": 1790162797.1963117,
+      "file_name": "000025.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000025.jpg"
+    },
+    {
+      "created_at": 1790162797.3863363,
+      "file_name": "000021.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000021.jpg"
+    },
+    {
+      "created_at": 1790162797.418485,
+      "file_name": "000026.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000026.jpg"
+    },
+    {
+      "created_at": 1790162798.2653866,
+      "file_name": "000028.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000028.jpg"
+    },
+    {
+      "created_at": 1790162798.9944823,
+      "file_name": "000030.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000030.jpg"
+    },
+    {
+      "created_at": 1790162803.3176613,
+      "file_name": "000033.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000033.jpg"
+    },
+    {
+      "created_at": 1790162804.5688126,
+      "file_name": "000034.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000034.jpg"
+    },
+    {
+      "created_at": 1790162805.189503,
+      "file_name": "000035.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000035.jpg"
+    },
+    {
+      "created_at": 1790162806.1439314,
+      "file_name": "000038.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000038.jpg"
+    },
+    {
+      "created_at": 1790162807.4655821,
+      "file_name": "000037.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000037.jpg"
+    },
+    {
+      "created_at": 1790162808.3421478,
+      "file_name": "000040.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000040.jpg"
+    },
+    {
+      "created_at": 1790162812.9462883,
+      "file_name": "000043.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000043.jpg"
+    },
+    {
+      "created_at": 1790162814.5826612,
+      "file_name": "000041.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000041.jpg"
+    },
+    {
+      "created_at": 1790162815.2386851,
+      "file_name": "000044.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000044.jpg"
+    },
+    {
+      "created_at": 1790162819.1032584,
+      "file_name": "000047.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000047.jpg"
+    },
+    {
+      "created_at": 1790162821.2542481,
+      "file_name": "000053.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000053.jpg"
+    },
+    {
+      "created_at": 1790162822.8073232,
+      "file_name": "000054.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000054.jpg"
+    },
+    {
+      "created_at": 1790162822.8404596,
+      "file_name": "000056.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000056.jpg"
+    },
+    {
+      "created_at": 1790162830.1783462,
+      "file_name": "000063.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000063.jpg"
+    },
+    {
+      "created_at": 1790162830.7357175,
+      "file_name": "000064.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000064.jpg"
+    },
+    {
+      "created_at": 1790162831.3101254,
+      "file_name": "000062.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000062.jpg"
+    },
+    {
+      "created_at": 1790162831.9435327,
+      "file_name": "000070.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000070.jpg"
+    },
+    {
+      "created_at": 1790162832.0053344,
+      "file_name": "000065.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000065.jpg"
+    },
+    {
+      "created_at": 1790162835.1295393,
+      "file_name": "000075.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000075.jpg"
+    },
+    {
+      "created_at": 1790162835.285565,
+      "file_name": "000072.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000072.jpg"
+    },
+    {
+      "created_at": 1790162839.952568,
+      "file_name": "000082.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000082.jpg"
+    },
+    {
+      "created_at": 1790162841.1885154,
+      "file_name": "000083.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000083.jpg"
+    },
+    {
+      "created_at": 1790162844.2383437,
+      "file_name": "000091.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000091.jpg"
+    },
+    {
+      "created_at": 1790162845.2555642,
+      "file_name": "000088.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000088.jpg"
+    },
+    {
+      "created_at": 1790162849.540504,
+      "file_name": "000094.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000094.jpg"
+    },
+    {
+      "created_at": 1790162854.4844155,
+      "file_name": "000103.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000103.jpg"
+    },
+    {
+      "created_at": 1790162855.901127,
+      "file_name": "000104.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000104.jpg"
+    },
+    {
+      "created_at": 1790162855.9528477,
+      "file_name": "000106.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000106.jpg"
+    },
+    {
+      "created_at": 1790162856.074664,
+      "file_name": "000107.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000107.jpg"
+    },
+    {
+      "created_at": 1790162857.196728,
+      "file_name": "000105.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000105.jpg"
+    },
+    {
+      "created_at": 1790162857.6195161,
+      "file_name": "000109.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000109.jpg"
+    },
+    {
+      "created_at": 1790162861.0563953,
+      "file_name": "000110.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000110.jpg"
+    },
+    {
+      "created_at": 1790162863.444617,
+      "file_name": "000112.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000112.jpg"
+    },
+    {
+      "created_at": 1790162864.670057,
+      "file_name": "000114.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000114.jpg"
+    },
+    {
+      "created_at": 1790162865.5825517,
+      "file_name": "000116.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000116.jpg"
+    },
+    {
+      "created_at": 1790162866.7601302,
+      "file_name": "000117.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000117.jpg"
+    },
+    {
+      "created_at": 1790162867.7346983,
+      "file_name": "000118.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000118.jpg"
+    },
+    {
+      "created_at": 1790162871.5327935,
+      "file_name": "000123.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000123.jpg"
+    },
+    {
+      "created_at": 1790162871.7091079,
+      "file_name": "000121.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000121.jpg"
+    },
+    {
+      "created_at": 1790162874.1161497,
+      "file_name": "000129.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000129.jpg"
+    },
+    {
+      "created_at": 1790162874.9876084,
+      "file_name": "000131.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000131.jpg"
+    },
+    {
+      "created_at": 1790162876.4296288,
+      "file_name": "000130.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000130.jpg"
+    },
+    {
+      "created_at": 1790162881.0876272,
+      "file_name": "000137.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000137.jpg"
+    },
+    {
+      "created_at": 1790162884.2316716,
+      "file_name": "000145.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000145.jpg"
+    },
+    {
+      "created_at": 1790162885.2375913,
+      "file_name": "000150.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000150.jpg"
+    },
+    {
+      "created_at": 1790162894.187601,
+      "file_name": "000158.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000158.jpg"
+    },
+    {
+      "created_at": 1790162895.078741,
+      "file_name": "000161.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000161.jpg"
+    },
+    {
+      "created_at": 1790162898.430636,
+      "file_name": "000164.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000164.jpg"
+    },
+    {
+      "created_at": 1790162900.0067034,
+      "file_name": "000165.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000165.jpg"
+    },
+    {
+      "created_at": 1790162900.235957,
+      "file_name": "000166.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000166.jpg"
+    },
+    {
+      "created_at": 1790162902.856712,
+      "file_name": "000169.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000169.jpg"
+    },
+    {
+      "created_at": 1790162903.5666306,
+      "file_name": "000171.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000171.jpg"
+    },
+    {
+      "created_at": 1790162903.9536734,
+      "file_name": "000168.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000168.jpg"
+    },
+    {
+      "created_at": 1790162907.5746565,
+      "file_name": "000173.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000173.jpg"
+    },
+    {
+      "created_at": 1790162909.820877,
+      "file_name": "000176.jpg",
+      "source_path": "/home/adnane/Documents/programming/rafinity_inventory_v1/backend/photo_jobs/575c332dc991489e9867e5d97cd4ca00/000176.jpg"
+    }
+  ],
+  "folder_name": "titi",
+  "inventory_date": "2026-09-02",
+  "job_id": "575c332dc991489e9867e5d97cd4ca00",
+  "user_id": "3a9694f8471040a6bc21e4aa5990e006",
+  "username": "titi"
+}

@@ -30,6 +30,19 @@ la première création du volume `oracle-data`.
 Pour une base existante, exécutez aussi une fois
 `backend/sql/add_photo_job_history.sql` afin d'activer l'historique des traitements photo.
 
+Pour conserver le nom original des images dont un code a été trouvé lors d'un
+import photo, exécutez également une fois
+`backend/sql/add_scan_image_name.sql` sur une base existante.
+
+Les images sans code lisible sont conservées dans `backend/photo_jobs/unread`
+et les images contenant au moins un code déjà enregistré dans
+`backend/photo_jobs/duplicates`, avec un sous-dossier par utilisateur et par
+traitement. Ces images sont accessibles depuis les cartes de résultat dans
+l'interface d'administration.
+
+Pour activer le stockage du dossier parent photo par défaut, exécutez aussi
+une fois `backend/sql/add_photo_parent_path.sql` sur une base existante.
+
 Exécutez également `backend/sql/add_video_job_history.sql` pour activer
 l'historique des traitements vidéo administrateur.
 
@@ -65,6 +78,15 @@ export ORACLE_PASSWORD="ticket_scanner"
 export ORACLE_DSN="serveur-oracle:1521/NOM_SERVICE"
 export JWT_SECRET="une-longue-phrase-secrete-a-changer"
 ```
+
+Pour utiliser un dossier photo parent depuis Docker, ajoutez aussi dans le
+`.env` racine le chemin du dossier présent sur l'hôte Windows :
+```bash
+PHOTO_PARENT_HOST_PATH=C:/Rafinity
+PHOTO_PARENT_MOUNT_PATH=/mnt/photo-parent
+```
+Dans l'interface admin, saisissez ensuite `C:\Rafinity`. Le backend lit le
+dossier monté en lecture seule et affiche les sous-dossiers correspondants.
 
 Lancer :
 ```bash
@@ -346,3 +368,10 @@ mkcert `
   -cert-file frontend\certs\server.pem `
   -key-file frontend\certs\server-key.pem `
   localhost 127.0.0.1 10.1.1.77
+
+
+  TRUNCATE TABLE app_photo_job_codes;
+TRUNCATE TABLE app_photo_job_users;
+TRUNCATE TABLE app_photo_jobs;
+TRUNCATE TABLE app_deletions;
+TRUNCATE TABLE app_scans;

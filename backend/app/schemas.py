@@ -85,10 +85,11 @@ class ScanRecord(BaseModel):
     username: str
     code: str
     method: ScanMethod
+    image_name: Optional[str] = None
     confidence: Optional[float] = None
     scanned_at: float = Field(default_factory=time.time)
-    scan_date: str = Field(default_factory=today_str)     # real calendar date of the scan
-    inventory_date: str = ""                              # admin-defined inventory date
+    scan_date: str = Field(default_factory=today_str)  # real calendar date of the scan
+    inventory_date: str = ""  # admin-defined inventory date
 
 
 class ScanRegisterResponse(BaseModel):
@@ -100,6 +101,24 @@ class ScanRegisterResponse(BaseModel):
 class MyScansResponse(BaseModel):
     scans: List[ScanRecord]
     total: int
+
+
+# --------------------------------------------------------------------- #
+# Default photo parent folder
+# --------------------------------------------------------------------- #
+class PhotoParentFolderRequest(BaseModel):
+    path: str
+
+
+class PhotoParentSubfolder(BaseModel):
+    name: str
+    image_count: int
+
+
+class PhotoParentFolderResponse(BaseModel):
+    path: Optional[str] = None
+    exists: bool = False
+    subfolders: List[PhotoParentSubfolder] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------- #
@@ -135,7 +154,9 @@ class MergedDayResponse(BaseModel):
 class OcrResponse(BaseModel):
     code: Optional[str]
     confidence: Optional[float]
-    blob_count: int = 0  # 0=no label found, 1=single ticket (reliable), >1=too many tickets
+    blob_count: int = (
+        0  # 0=no label found, 1=single ticket (reliable), >1=too many tickets
+    )
     error: Optional[str] = None
 
 

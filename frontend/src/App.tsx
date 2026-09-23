@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import LoginPage from "./pages/LoginPage";
 import ScannerPage from "./pages/ScannerPage";
-import AdminPage, { UnreadFolderDetailPage } from "./pages/AdminPage";
+import AdminPage, { DuplicateFolderDetailPage, UnreadFolderDetailPage } from "./pages/AdminPage";
 import VideoScanPage from "./pages/VideoScanPage";
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -94,6 +94,14 @@ export default function App() {
             }
           />
           <Route
+            path="/admin/photo-parent"
+            element={
+              <RequireAdmin>
+                <AdminPage />
+              </RequireAdmin>
+            }
+          />
+          <Route
             path="/admin/inventory"
             element={
               <RequireAdmin>
@@ -122,6 +130,14 @@ export default function App() {
             element={
               <RequireAdmin>
                 <UnreadFolderDetailPage />
+              </RequireAdmin>
+            }
+          />
+          <Route
+            path="/admin/duplicate-folder/:folderKey"
+            element={
+              <RequireAdmin>
+                <DuplicateFolderDetailPage />
               </RequireAdmin>
             }
           />

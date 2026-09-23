@@ -16,6 +16,10 @@ import {
   adminClearInventory,
   adminListDeletions,
   fetchActiveInventory,
+  adminGetPhotoParent,
+  adminGetPhotoParentImage,
+  adminSetPhotoParent,
+  adminImportPhotoParent,
   type DaySummaryDto,
   type UserDayScansDto,
   type ScanDto,
@@ -28,12 +32,18 @@ import {
   adminListPhotoJobs,
   adminListPhotoHistory,
   adminListUnreadPhotoFolders,
+  adminListDuplicatePhotoFolders,
+  adminGetDuplicatePhotoImage,
+  adminDeleteDuplicatePhotoFolder,
   adminDeleteUnreadPhotoFolder,
   adminAddManualCodeToUnreadFolder,
+  adminMarkUnreadPhotoAsDuplicate,
   adminAddManualCodeToUser,
   type UnreadPhotoFolderDto,
+  type DuplicatePhotoFolderDto,
+  type PhotoParentFolderDto,
 } from "../lib/api";
-import { DownloadIcon } from "../components/icons";
+import { CopyIcon, DownloadIcon } from "../components/icons";
 
 type View =
   | { kind: "days" }
@@ -42,14 +52,16 @@ type View =
   | { kind: "merged"; date: string }
   | { kind: "users" }
   | { kind: "photos" }
+  | { kind: "photo-parent" }
   | { kind: "inventory" }
   | { kind: "deletions" };
 
-type NavKey = "days" | "photos" | "folders" | "inventory" | "deletions" | "users";
+type NavKey = "days" | "photos" | "photo-parent" | "folders" | "inventory" | "deletions" | "users";
 
 const NAV_ITEMS: { key: NavKey; label: string; icon: ReactNode }[] = [
   { key: "days", label: "Scans", icon: <ScanIcon /> },
   { key: "photos", label: "Photos", icon: <FolderIcon /> },
+  { key: "photo-parent", label: "Dossier parent", icon: <FolderIcon /> },
   { key: "inventory", label: "Inventaire", icon: <InventoryIcon /> },
   { key: "deletions", label: "Suppressions", icon: <TrashIcon /> },
   { key: "users", label: "Utilisateurs", icon: <UsersIcon /> },
@@ -66,6 +78,7 @@ function viewFromPathname(pathname: string): View {
   if (pathname.endsWith("/deletions")) return { kind: "deletions" };
   if (pathname.endsWith("/inventory")) return { kind: "inventory" };
   if (pathname.endsWith("/photos")) return { kind: "photos" };
+  if (pathname.endsWith("/photo-parent")) return { kind: "photo-parent" };
   if (pathname.endsWith("/scans") || pathname === "/admin") return { kind: "days" };
   return { kind: "days" };
 }
@@ -76,6 +89,8 @@ function routeForNavKey(key: NavKey): string {
       return "/admin/scans";
     case "photos":
       return "/admin/photos";
+    case "photo-parent":
+      return "/admin/photo-parent";
     case "inventory":
       return "/admin/inventory";
     case "deletions":
@@ -449,6 +464,7 @@ export default function AdminPage() {
             />
           )}
           {view.kind === "photos" && <PhotoImportView />}
+          {view.kind === "photo-parent" && <PhotoParentView />}
           {view.kind === "deletions" && <DeletionsView />}
           {view.kind === "users" && <UserManagementView />}
         </main>
@@ -667,6 +683,7 @@ function UserScansView({
   const [deleteTarget, setDeleteTarget] = useState<ScanDto | null>(null);
   const [manualCode, setManualCode] = useState("");
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [imagePreview, setImagePreview] = useState<{ url: string; name: string } | null>(null);
 
   useEffect(() => {
     if (!toast) return;
@@ -717,11 +734,39 @@ function UserScansView({
         await refreshUserData();
         setToast({ type: "success", message: `Code ${code} ajouté pour ${data.user.username}.` });
       } else {
-        setToast({ type: "error", message: `Le code "${code}" est déjà enregistré pour cet inventaire et a été ignoré.` });
+        setToast({ type: "error", message: `Le code "${code}" est déjà enregistré pour cet inventaire.` });
       }
     } catch (error) {
       setToast({ type: "error", message: error instanceof Error ? error.message : "Ajout manuel impossible." });
     }
+  };
+
+  const copyImageName = async (imageName: string) => {
+    try {
+      await navigator.clipboard.writeText(imageName);
+      setToast({ type: "success", message: "Nom de l'image copié." });
+    } catch {
+      setToast({ type: "error", message: "Impossible de copier le nom de l'image." });
+    }
+  };
+
+  const openScanImage = async (scan: ScanDto) => {
+    if (!token || !scan.image_name) return;
+    try {
+      const blob = await adminGetPhotoParentImage(token, scan.username, scan.image_name);
+      const url = URL.createObjectURL(blob);
+      setImagePreview((current) => {
+        if (current) URL.revokeObjectURL(current.url);
+        return { url, name: scan.image_name! };
+      });
+    } catch (error) {
+      setToast({ type: "error", message: error instanceof Error ? error.message : "Impossible de charger l'image." });
+    }
+  };
+
+  const closeImagePreview = () => {
+    if (imagePreview) URL.revokeObjectURL(imagePreview.url);
+    setImagePreview(null);
   };
 
   return (
@@ -813,11 +858,26 @@ function UserScansView({
         rows={filteredScans.map((s) => ({
           code: s.code,
           meta: s.method,
+          image_name: s.image_name,
+          onImageClick: s.image_name ? () => void openScanImage(s) : undefined,
+          onCopyImage: s.image_name ? () => void copyImageName(s.image_name!) : undefined,
           scan_date: s.scan_date,
           action: <button type="button" onClick={() => setDeleteTarget(s)} style={adminDeleteButtonStyle}>Supprimer</button>,
         }))}
         metaLabel="Méthode"
+        showImageName
       />
+      {imagePreview && (
+        <div role="presentation" style={dialogBackdropStyle} onMouseDown={closeImagePreview}>
+          <div role="dialog" aria-modal="true" style={{ ...dialogStyle, maxWidth: "min(92vw, 900px)" }} onMouseDown={(event) => event.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 12 }}>
+              <strong style={{ color: "#2b2a22", overflow: "hidden", textOverflow: "ellipsis" }}>{imagePreview.name}</strong>
+              <button type="button" onClick={closeImagePreview} style={dialogCancelStyle}>Fermer</button>
+            </div>
+            <img src={imagePreview.url} alt={imagePreview.name} style={{ display: "block", maxWidth: "100%", maxHeight: "72vh", objectFit: "contain", margin: "0 auto", borderRadius: 8 }} />
+          </div>
+        </div>
+      )}
       {toast && <AdminToast toast={toast} onClose={() => setToast(null)} />}
       {deleteTarget && (
         <ConfirmDialog
@@ -888,7 +948,6 @@ function MergedView({ date, onBack }: { date: string; onBack: () => void }) {
   const { token } = useAuth();
   const [data, setData] = useState<MergedDayDto | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
-
   useEffect(() => {
     if (!token) return;
     adminMergedDay(token, date).then(setData);
@@ -1002,27 +1061,108 @@ function MergedView({ date, onBack }: { date: string; onBack: () => void }) {
   );
 }
 
+function PhotoParentView() {
+  const { token } = useAuth();
+  const [data, setData] = useState<PhotoParentFolderDto | null>(null);
+  const [path, setPath] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  const load = async () => {
+    if (!token) return;
+    setLoading(true);
+    try {
+      const result = await adminGetPhotoParent(token);
+      setData(result);
+      setPath(result.path ?? "");
+    } catch (error) {
+      setToast({ type: "error", message: error instanceof Error ? error.message : "Impossible de charger le dossier parent." });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, [token]);
+
+  const save = async () => {
+    if (!token || !path.trim()) return;
+    setSaving(true);
+    try {
+      const result = await adminSetPhotoParent(token, path.trim());
+      setData(result);
+      setPath(result.path ?? "");
+      setToast({ type: "success", message: "Le dossier parent par défaut a été enregistré." });
+    } catch (error) {
+      setToast({ type: "error", message: error instanceof Error ? error.message : "Impossible d'enregistrer le dossier parent." });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div>
+      <PageHeader title="Dossier parent par défaut" subtitle="Configurez le dossier serveur qui contient un sous-dossier par utilisateur." />
+      <div style={panelStyle}>
+        <div style={{ display: "flex", gap: 10, alignItems: "end", flexWrap: "wrap" }}>
+          <label style={{ flex: 1, minWidth: 260 }}>
+            <span style={{ display: "block", color: "#6f6a58", fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>Chemin du dossier parent</span>
+            <input value={path} onChange={(event) => setPath(event.target.value)} placeholder="C:\\Rafinity" className="admin-input" style={{ ...inputStyle, width: "100%" }} />
+          </label>
+          <PrimaryButton onClick={() => void save()} disabled={saving || !path.trim()}>{saving ? "Enregistrement…" : "Enregistrer le chemin"}</PrimaryButton>
+          <GhostButton onClick={() => void load()} disabled={loading}>Actualiser</GhostButton>
+        </div>
+        <div style={{ marginTop: 14, color: data?.exists ? "#3b6d11" : "#9b3b2f", fontSize: 13, fontWeight: 700 }}>
+          {data?.exists ? "Dossier accessible par le backend" : "Dossier non accessible par le backend"}
+        </div>
+        <div style={{ marginTop: 18, fontWeight: 800, color: "#2b2a22" }}>Sous-dossiers utilisateurs</div>
+        {!data?.subfolders.length ? (
+          <div style={{ ...emptyStateStyle, marginTop: 10 }}>{loading ? "Chargement…" : "Aucun sous-dossier contenant des images."}</div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginTop: 10 }}>
+            {data.subfolders.map((folder) => (
+              <div key={folder.name} style={{ border: "1px solid #eeece0", borderRadius: 10, padding: "12px 14px", background: "#fbfaf6" }}>
+                <div style={{ fontWeight: 800, color: "#2b2a22", overflow: "hidden", textOverflow: "ellipsis" }}>{folder.name}</div>
+                <div style={{ marginTop: 5, color: "#8b8574", fontSize: 13 }}>{folder.image_count} image(s)</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {toast && <AdminToast toast={toast} onClose={() => setToast(null)} />}
+    </div>
+  );
+}
+
 // --------------------------------------------------------------------- //
 function CodeTable({
   rows,
   metaLabel,
-  showScanDate = true, // Ajout d'un paramètre optionnel
+  showScanDate = true,
+  showImageName = false,
 }: {
   rows: {
     code: string;
     meta: string;
+    image_name?: string | null;
+    onImageClick?: () => void;
+    onCopyImage?: () => void;
     warn?: boolean;
     scan_date?: string; // scan_date devient optionnel
     action?: ReactNode;
   }[];
   metaLabel: string;
-  showScanDate?: boolean; // Nouveau paramètre
+  showScanDate?: boolean;
+  showImageName?: boolean;
 }) {
   return (
     <div style={tableWrapStyle}>
       <div style={tableHeadStyle}>
         <div style={{ flex: 1 }}>Code</div>
         <div style={{ flex: 1 }}>{metaLabel}</div>
+        {showImageName && <div style={{ flex: 1 }}>Nom image</div>}
         {showScanDate && <div style={{ flex: 1 }}>Date Scan</div>}{" "}
         {/* Conditionnel */}
       </div>
@@ -1057,6 +1197,34 @@ function CodeTable({
               {r.warn && "⚠ "}
               {r.meta}
             </div>
+            {showImageName && (
+              <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 6 }}>
+                {r.image_name ? (
+                  <button
+                    type="button"
+                    onClick={r.onImageClick}
+                    disabled={!r.onImageClick}
+                    title="Afficher l'image"
+                    style={{ border: 0, padding: 0, background: "transparent", color: "#496b35", cursor: r.onImageClick ? "pointer" : "default", fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: r.onImageClick ? "underline" : "none", textAlign: "left" }}
+                  >
+                    {r.image_name}
+                  </button>
+                ) : (
+                  <span style={{ color: "#8b8574", fontSize: 13.5 }}>-</span>
+                )}
+                {r.image_name && r.onCopyImage && (
+                  <button
+                    type="button"
+                    onClick={r.onCopyImage}
+                    title="Copier le nom de l'image"
+                    aria-label={`Copier ${r.image_name}`}
+                    style={{ display: "inline-flex", alignItems: "center", border: 0, background: "transparent", color: "#6f6a58", cursor: "pointer", padding: 3, flexShrink: 0 }}
+                  >
+                    <CopyIcon size={15} />
+                  </button>
+                )}
+              </div>
+            )}
             {showScanDate /* Conditionnel */ && (
               <div
                 style={{
@@ -1253,7 +1421,10 @@ function PhotoImportView() {
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [confirmUpload, setConfirmUpload] = useState(false);
   const [confirmDeleteFolder, setConfirmDeleteFolder] = useState<UnreadPhotoFolderDto | null>(null);
+  const [confirmDeleteDuplicateFolder, setConfirmDeleteDuplicateFolder] = useState<DuplicatePhotoFolderDto | null>(null);
   const [previewImage, setPreviewImage] = useState<{ url: string; name: string; folderKey: string } | null>(null);
+  const [photoParent, setPhotoParent] = useState<PhotoParentFolderDto | null>(null);
+  const [defaultParentSelected, setDefaultParentSelected] = useState(false);
   const knownJobStatuses = useRef<Map<string, BulkPhotoJobDto["status"]> | null>(null);
   const navigate = useNavigate();
 
@@ -1287,6 +1458,7 @@ function PhotoImportView() {
   };
 
   const handleFolderSelection = (event: ChangeEvent<HTMLInputElement>) => {
+    setDefaultParentSelected(false);
     setFiles(Array.from(event.target.files ?? []));
   };
 
@@ -1326,6 +1498,7 @@ function PhotoImportView() {
       };
 
       await collectFiles(directory, directory.name);
+      setDefaultParentSelected(false);
       setFiles(selectedFiles);
       if (selectedFiles.length === 0) {
         setToast({ type: "error", message: "Aucune image trouvée dans ce dossier." });
@@ -1380,19 +1553,32 @@ function PhotoImportView() {
 
   useEffect(() => {
     void loadJobs();
+    if (token) {
+      void adminGetPhotoParent(token).then(setPhotoParent).catch(() => setPhotoParent(null));
+    }
     const timer = window.setInterval(() => void loadJobs(), 5000);
     return () => window.clearInterval(timer);
   }, [token, historyDate]);
 
+  const importDefaultParent = async () => {
+    if (!token || !photoParent?.exists) return;
+    setDefaultParentSelected(true);
+    setFiles([]);
+    setToast({ type: "success", message: "Dossier chargé. Vérifiez son contenu puis lancez le traitement." });
+  };
+
   const launch = async () => {
-    if (!token || files.length === 0) return;
+    if (!token || (!defaultParentSelected && files.length === 0)) return;
     setConfirmUpload(false);
     setLoading(true);
     setToast(null);
     try {
-      const job = await adminCreatePhotoJob(token, files);
+      const job = defaultParentSelected
+        ? await adminImportPhotoParent(token)
+        : await adminCreatePhotoJob(token, files);
       setJobs((current) => [job, ...current]);
       setFiles([]);
+      setDefaultParentSelected(false);
       setToast({ type: "success", message: "Le traitement a été lancé en arrière-plan." });
     } catch (error) {
       setToast({ type: "error", message: error instanceof Error ? error.message : "Échec du lancement." });
@@ -1458,6 +1644,30 @@ function PhotoImportView() {
     }
   };
 
+  const removeDuplicateFolderFromJobState = (folderKey: string) => {
+    const updateJobs = (current: BulkPhotoJobDto[]) => current.map((job) => ({
+      ...job,
+      duplicate_images: (job.duplicate_images ?? []).filter((folder) => folder.folder_key !== folderKey),
+      user_results: (job.user_results ?? []).map((result) => ({
+        ...result,
+        duplicate_folders: (result.duplicate_folders ?? []).filter((folder) => folder.folder_key !== folderKey),
+      })),
+    }));
+    setJobs(updateJobs);
+    setHistory(updateJobs);
+  };
+
+  const handleDeleteDuplicateFolder = async (folderKey: string) => {
+    if (!token) return;
+    try {
+      await adminDeleteDuplicatePhotoFolder(token, folderKey);
+      removeDuplicateFolderFromJobState(folderKey);
+      setToast({ type: "success", message: "Le dossier de doublons a été supprimé." });
+    } catch (error) {
+      setToast({ type: "error", message: error instanceof Error ? error.message : "Suppression impossible." });
+    }
+  };
+
   const confirmDeleteUnreadFolder = async () => {
     if (!confirmDeleteFolder) return;
     setConfirmDeleteFolder(null);
@@ -1497,6 +1707,33 @@ function PhotoImportView() {
         subtitle="Sélectionnez un dossier parent contenant un sous-dossier par utilisateur"
       />
       <div style={panelStyle}>
+        <div style={{ border: "1px solid #d9e6d4", borderRadius: 10, padding: 12, background: "#f4faf2", marginBottom: 14 }}>
+          <div style={{ fontWeight: 800, color: "#2b2a22" }}>Dossier parent par défaut</div>
+          <div style={{ marginTop: 4, color: "#6f6a58", fontSize: 13, wordBreak: "break-all" }}>
+            {photoParent?.path ?? "Aucun chemin configuré"}
+          </div>
+          <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ color: photoParent?.exists ? "#3b6d11" : "#9b3b2f", fontSize: 12.5, fontWeight: 700 }}>
+              {photoParent?.exists ? `${photoParent.subfolders.length} sous-dossier(s) accessible(s)` : "Chemin inaccessible"}
+            </span>
+            <PrimaryButton onClick={() => void importDefaultParent()} disabled={loading || !photoParent?.exists}>
+              {defaultParentSelected ? "Dossier sélectionné" : "Utiliser ce dossier"}
+            </PrimaryButton>
+          </div>
+          {defaultParentSelected && photoParent && (
+            <div style={{ marginTop: 12, borderTop: "1px solid #d9e6d4", paddingTop: 10 }}>
+              <div style={{ color: "#3b6d11", fontSize: 13, fontWeight: 800 }}>Contenu prêt à être traité</div>
+              <div style={{ color: "#6f6a58", fontSize: 13, marginTop: 5 }}>
+                {photoParent.subfolders.reduce((total, folder) => total + folder.image_count, 0)} image(s) dans {photoParent.subfolders.length} sous-dossier(s).
+              </div>
+              <div style={folderListStyle}>
+                {photoParent.subfolders.map((folder) => (
+                  <span key={folder.name} style={folderChipStyle}>📁 {folder.name} · {folder.image_count} image{folder.image_count > 1 ? "s" : ""}</span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
         <input
           ref={inputRef}
           type="file"
@@ -1511,7 +1748,9 @@ function PhotoImportView() {
             <FolderIcon size={17} /> Choisir le dossier parent
           </PrimaryButton>
           <span style={{ color: "#6f6a58", fontSize: 13 }}>
-              {files.length
+              {defaultParentSelected
+                ? `Dossier prêt à être traité · ${photoParent?.path ?? "dossier parent par défaut"}`
+                : files.length
                 ? `Dossier prêt à être envoyé · ${selectedParentFolder}`
                 : "Aucun dossier sélectionné"}
           </span>
@@ -1534,7 +1773,7 @@ function PhotoImportView() {
         )}
 
         <div style={{ marginTop: 16, display: "flex", justifyContent: "center" }}>
-          <PrimaryButton onClick={() => setConfirmUpload(true)} disabled={loading || files.length === 0} style={{ width: "100%", maxWidth: "100%" }}>
+          <PrimaryButton onClick={() => setConfirmUpload(true)} disabled={loading || (!defaultParentSelected && files.length === 0)} style={{ width: "100%", maxWidth: "100%" }}>
             {loading ? "Envoi…" : "Lancer le traitement"}
           </PrimaryButton>
         </div>
@@ -1698,6 +1937,32 @@ function PhotoImportView() {
                               })}
                             </div>
                           )}
+                          {(result.duplicate_folders ?? []).length > 0 && (
+                            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                              {result.duplicate_folders.map((folder, folderIndex) => (
+                                <div key={`${result.user_id}-duplicate-${folder.folder_key || folder.folder_name}-${folderIndex}`} style={{ border: "1px solid #e5c477", borderRadius: 10, background: "#fff9e8", padding: 10, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                                  <div>
+                                    <div style={{ color: "#6b4b12", fontWeight: 800, fontSize: 12.5 }}>Images doublons</div>
+                                    <div style={{ color: "#8a6a2b", fontSize: 11.5, marginTop: 3 }}>{folder.file_count} image(s) · {folder.folder_name}</div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => navigate(`/admin/duplicate-folder/${encodeURIComponent(folder.folder_key)}`)}
+                                    style={{ border: "1px solid #d4b15f", background: "#fff3c9", color: "#6b4b12", borderRadius: 8, padding: "5px 10px", fontSize: 11, fontWeight: 800, cursor: "pointer" }}
+                                  >
+                                    Voir les doublons
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteDuplicateFolder(folder)}
+                                    style={{ border: "1px solid #d9a39a", background: "#fff0ee", color: "#8b2e2a", borderRadius: 8, padding: "4px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                                  >
+                                    Supprimer
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -1753,7 +2018,9 @@ function PhotoImportView() {
       {confirmUpload && (
         <ConfirmDialog
           title="Lancer le traitement des photos ?"
-          message={`${files.length} photo${files.length > 1 ? "s" : ""} seront envoyée${files.length > 1 ? "s" : ""} et analysée${files.length > 1 ? "s" : ""} par lecture de codes-barres.`}
+          message={defaultParentSelected
+            ? "Le contenu du dossier parent par défaut sera importé et analysé par lecture de codes-barres."
+            : `${files.length} photo${files.length > 1 ? "s" : ""} seront envoyée${files.length > 1 ? "s" : ""} et analysée${files.length > 1 ? "s" : ""} par lecture de codes-barres.`}
           confirmLabel="Envoyer et traiter"
           onCancel={() => setConfirmUpload(false)}
           onConfirm={launch}
@@ -1766,6 +2033,19 @@ function PhotoImportView() {
           confirmLabel="Supprimer définitivement"
           onCancel={() => setConfirmDeleteFolder(null)}
           onConfirm={confirmDeleteUnreadFolder}
+        />
+      )}
+      {confirmDeleteDuplicateFolder && (
+        <ConfirmDialog
+          title="Supprimer le dossier de doublons ?"
+          message={`Le dossier “${confirmDeleteDuplicateFolder.folder_name}” contient ${confirmDeleteDuplicateFolder.file_count} image${confirmDeleteDuplicateFolder.file_count > 1 ? "s" : ""}. Cette action supprimera définitivement les copies du dossier doublons.`}
+          confirmLabel="Supprimer définitivement"
+          onCancel={() => setConfirmDeleteDuplicateFolder(null)}
+          onConfirm={async () => {
+            const folder = confirmDeleteDuplicateFolder;
+            setConfirmDeleteDuplicateFolder(null);
+            await handleDeleteDuplicateFolder(folder.folder_key);
+          }}
         />
       )}
     </div>
@@ -1787,10 +2067,13 @@ export function UnreadFolderDetailPage() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [previewImage, setPreviewImage] = useState<{ url: string; name: string; folderKey: string; index: number } | null>(null);
   const [previewZoom, setPreviewZoom] = useState(1);
+  const [previewRotation, setPreviewRotation] = useState(0);
   const [previewPan, setPreviewPan] = useState({ x: 0, y: 0 });
   const [isDraggingPreview, setIsDraggingPreview] = useState(false);
   const previewDragRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [duplicateMarkMode, setDuplicateMarkMode] = useState(false);
+  const [markedDuplicateFiles, setMarkedDuplicateFiles] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!toast) return;
@@ -1916,6 +2199,7 @@ export function UnreadFolderDetailPage() {
         URL.revokeObjectURL(previewImage.url);
       }
       setPreviewZoom(1);
+      setPreviewRotation(0);
       setPreviewPan({ x: 0, y: 0 });
       setIsDraggingPreview(false);
       setPreviewImage({ url: nextUrl, name: file, folderKey: folder.folder_key, index });
@@ -1979,10 +2263,22 @@ export function UnreadFolderDetailPage() {
         setManualCode("");
         setToast({ type: "success", message: `Code ${code} ajouté pour ${folder.username}.` });
       } else {
-        setToast({ type: "error", message: `Le code "${code}" est déjà enregistré pour cet inventaire et a été ignoré.` });
+        setDuplicateMarkMode(true);
+        setToast({ type: "error", message: `Le code "${code}" est déjà enregistré. Choisissez l'image à copier dans le dossier des doublons.` });
       }
     } catch (error) {
       setToast({ type: "error", message: error instanceof Error ? error.message : "Ajout manuel impossible." });
+    }
+  };
+
+  const markImageAsDuplicate = async (fileName: string) => {
+    if (!token || !folder) return;
+    try {
+      await adminMarkUnreadPhotoAsDuplicate(token, folder.folder_key, fileName);
+      setMarkedDuplicateFiles((current) => new Set(current).add(fileName));
+      setToast({ type: "success", message: "L'image a été copiée dans le dossier des doublons. L'originale est conservée." });
+    } catch (error) {
+      setToast({ type: "error", message: error instanceof Error ? error.message : "Impossible de copier l'image." });
     }
   };
 
@@ -2003,7 +2299,8 @@ export function UnreadFolderDetailPage() {
         setPreviewManualCode("");
         setToast({ type: "success", message: `Code ${code} ajouté pour ${folder.username}.` });
       } else {
-        setToast({ type: "error", message: `Le code "${code}" est déjà enregistré pour cet inventaire et a été ignoré.` });
+        setDuplicateMarkMode(true);
+        setToast({ type: "error", message: `Le code "${code}" est déjà enregistré. Choisissez l'image à copier dans le dossier des doublons.` });
       }
     } catch (error) {
       setToast({ type: "error", message: error instanceof Error ? error.message : "Ajout manuel impossible." });
@@ -2106,6 +2403,18 @@ export function UnreadFolderDetailPage() {
                     <div style={{ padding: "8px 10px", fontSize: 11.5, color: "#4d483a", overflowWrap: "anywhere", borderTop: "1px solid #efe7c8" }}>
                       {file}
                     </div>
+                    {duplicateMarkMode && (
+                      <div style={{ padding: "0 10px 10px" }}>
+                        <button
+                          type="button"
+                          onClick={() => void markImageAsDuplicate(file)}
+                          disabled={markedDuplicateFiles.has(file)}
+                          style={{ width: "100%", border: "1px solid #d4b15f", background: markedDuplicateFiles.has(file) ? "#efe5c5" : "#fff3c9", color: "#6b4b12", borderRadius: 8, padding: "7px 9px", fontSize: 11.5, fontWeight: 800, cursor: markedDuplicateFiles.has(file) ? "default" : "pointer" }}
+                        >
+                          {markedDuplicateFiles.has(file) ? "Copiée dans les doublons" : "Marquer comme doublon"}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -2146,7 +2455,7 @@ export function UnreadFolderDetailPage() {
       )}
 
       {previewImage && (
-        <div onClick={() => { URL.revokeObjectURL(previewImage.url); setPreviewImage(null); setPreviewZoom(1); setPreviewPan({ x: 0, y: 0 }); setIsDraggingPreview(false); }} style={{ position: "fixed", inset: 0, background: "rgba(18,18,18,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1200, padding: 20 }}>
+        <div onClick={() => { URL.revokeObjectURL(previewImage.url); setPreviewImage(null); setPreviewZoom(1); setPreviewRotation(0); setPreviewPan({ x: 0, y: 0 }); setIsDraggingPreview(false); }} style={{ position: "fixed", inset: 0, background: "rgba(18,18,18,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1200, padding: 20 }}>
           <div onClick={(event) => event.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: 10, width: "min(1040px, 90vw)", maxHeight: "90vh", boxShadow: "0 18px 44px rgba(0,0,0,0.2)", display: "flex", flexDirection: "column", gap: 8 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, minHeight: 40, width: "100%", flexWrap: "nowrap" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flexShrink: 1, overflow: "hidden" }}>
@@ -2179,6 +2488,22 @@ export function UnreadFolderDetailPage() {
                 </button>
                 <button
                   type="button"
+                  onClick={() => setPreviewRotation((current) => (current - 90 + 360) % 360)}
+                  title="Tourner à gauche"
+                  style={{ border: "1px solid #d4cfb5", background: "#f7f5ef", borderRadius: 8, padding: "6px 10px", cursor: "pointer", fontWeight: 700 }}
+                >
+                  ↶
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewRotation((current) => (current + 90) % 360)}
+                  title="Tourner à droite"
+                  style={{ border: "1px solid #d4cfb5", background: "#f7f5ef", borderRadius: 8, padding: "6px 10px", cursor: "pointer", fontWeight: 700 }}
+                >
+                  ↷
+                </button>
+                <button
+                  type="button"
                   onClick={() => void movePreviewImage(-1)}
                   disabled={previewImage.index === 0}
                   style={{ border: "1px solid #d4cfb5", background: previewImage.index === 0 ? "#f1efe7" : "#f7f5ef", borderRadius: 8, padding: "6px 10px", cursor: previewImage.index === 0 ? "default" : "pointer", fontWeight: 700, opacity: previewImage.index === 0 ? 0.6 : 1 }}
@@ -2193,7 +2518,17 @@ export function UnreadFolderDetailPage() {
                 >
                   Suivant
                 </button>
-                <button type="button" onClick={() => { URL.revokeObjectURL(previewImage.url); setPreviewImage(null); setPreviewZoom(1); setPreviewPan({ x: 0, y: 0 }); setIsDraggingPreview(false); }} style={{ border: "1px solid #d4cfb5", background: "#f7f5ef", borderRadius: 8, padding: "6px 10px", cursor: "pointer", fontWeight: 700 }}>Fermer</button>
+                {duplicateMarkMode && (
+                  <button
+                    type="button"
+                    onClick={() => void markImageAsDuplicate(previewImage.name)}
+                    disabled={markedDuplicateFiles.has(previewImage.name)}
+                    style={{ border: "1px solid #d4b15f", background: markedDuplicateFiles.has(previewImage.name) ? "#efe5c5" : "#fff3c9", color: "#6b4b12", borderRadius: 8, padding: "6px 10px", cursor: markedDuplicateFiles.has(previewImage.name) ? "default" : "pointer", fontWeight: 800 }}
+                  >
+                    {markedDuplicateFiles.has(previewImage.name) ? "Copiée" : "Marquer doublon"}
+                  </button>
+                )}
+                <button type="button" onClick={() => { URL.revokeObjectURL(previewImage.url); setPreviewImage(null); setPreviewZoom(1); setPreviewRotation(0); setPreviewPan({ x: 0, y: 0 }); setIsDraggingPreview(false); }} style={{ border: "1px solid #d4cfb5", background: "#f7f5ef", borderRadius: 8, padding: "6px 10px", cursor: "pointer", fontWeight: 700 }}>Fermer</button>
               </div>
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "nowrap", width: "100%", minHeight: 42 }}>
@@ -2235,7 +2570,7 @@ export function UnreadFolderDetailPage() {
                   maxHeight: "80vh",
                   borderRadius: 8,
                   objectFit: "contain",
-                  transform: `translate(${previewPan.x}px, ${previewPan.y}px) scale(${previewZoom})`,
+                  transform: `translate(${previewPan.x}px, ${previewPan.y}px) rotate(${previewRotation}deg) scale(${previewZoom})`,
                   transformOrigin: "center center",
                   transition: isDraggingPreview ? "none" : "transform 0.15s ease",
                   pointerEvents: "none",
@@ -2246,6 +2581,197 @@ export function UnreadFolderDetailPage() {
         </div>
       )}
 
+      {toast && <AdminToast toast={toast} onClose={() => setToast(null)} />}
+    </div>
+  );
+}
+
+const previewControlButtonStyle: CSSProperties = {
+  border: "1px solid #d4cfb5",
+  background: "#f7f5ef",
+  borderRadius: 8,
+  padding: "6px 10px",
+  cursor: "pointer",
+  fontWeight: 700,
+};
+
+export function DuplicateFolderDetailPage() {
+  const { token, user, logout } = useAuth();
+  const navigate = useNavigate();
+  const { folderKey } = useParams();
+  const [folder, setFolder] = useState<DuplicatePhotoFolderDto | null>(null);
+  const [images, setImages] = useState<{ file: string; url: string }[]>([]);
+  const [preview, setPreview] = useState<{ file: string; url: string; index: number } | null>(null);
+  const [previewZoom, setPreviewZoom] = useState(1);
+  const [previewRotation, setPreviewRotation] = useState(0);
+  const [previewPan, setPreviewPan] = useState({ x: 0, y: 0 });
+  const [isDraggingPreview, setIsDraggingPreview] = useState(false);
+  const previewDragRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timeout = window.setTimeout(() => setToast(null), 4000);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
+
+  useEffect(() => {
+    if (!token || !folderKey) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const folders = await adminListDuplicatePhotoFolders(token);
+        const found = folders.find((item) => item.folder_key === decodeURIComponent(folderKey));
+        if (!found) {
+          navigate("/admin/photos", { replace: true });
+          return;
+        }
+        setFolder(found);
+        const loaded = await Promise.allSettled(
+          found.files.map(async (file) => ({
+            file,
+            url: URL.createObjectURL(await adminGetDuplicatePhotoImage(token, found.folder_key, file)),
+          })),
+        );
+        if (!cancelled) {
+          setImages(loaded.flatMap((item) => item.status === "fulfilled" ? [item.value] : []));
+        }
+      } catch (error) {
+        if (!cancelled) setToast({ type: "error", message: error instanceof Error ? error.message : "Impossible de charger les doublons." });
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, folderKey, navigate]);
+
+  const closePreview = () => {
+    setPreview(null);
+    setPreviewZoom(1);
+    setPreviewRotation(0);
+    setPreviewPan({ x: 0, y: 0 });
+    setIsDraggingPreview(false);
+  };
+
+  const openPreview = (index: number) => {
+    const image = images[index];
+    if (!image) return;
+    setPreview({ ...image, index });
+    setPreviewZoom(1);
+    setPreviewRotation(0);
+    setPreviewPan({ x: 0, y: 0 });
+  };
+
+  const movePreview = (direction: -1 | 1) => {
+    if (!preview) return;
+    openPreview(preview.index + direction);
+  };
+
+  const handlePreviewPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!preview) return;
+    previewDragRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: previewPan.x,
+      originY: previewPan.y,
+    };
+    setIsDraggingPreview(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handlePreviewPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!previewDragRef.current || !preview) return;
+    setPreviewPan({
+      x: previewDragRef.current.originX + event.clientX - previewDragRef.current.startX,
+      y: previewDragRef.current.originY + event.clientY - previewDragRef.current.startY,
+    });
+  };
+
+  const handlePreviewPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    previewDragRef.current = null;
+    setIsDraggingPreview(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+  const deleteFolder = async () => {
+    if (!token || !folder) return;
+    setDeleteConfirmOpen(false);
+    try {
+      await adminDeleteDuplicatePhotoFolder(token, folder.folder_key);
+      images.forEach((image) => URL.revokeObjectURL(image.url));
+      navigate("/admin/photos", { replace: true });
+    } catch (error) {
+      setToast({ type: "error", message: error instanceof Error ? error.message : "Suppression impossible." });
+    }
+  };
+
+  return (
+    <div style={shellStyle}>
+      <AdminSidebar activeNav="folders" onNavigate={(key) => navigate(routeForNavKey(key))} user={user} onLogout={logout} />
+      <main className="admin-content" style={{ ...contentStyle, width: "100%" }}>
+        <BackButton onClick={() => navigate("/admin/photos")} label="Retour aux traitements" />
+        {!folder ? (
+          <PageSkeleton />
+        ) : (
+          <>
+            <div style={headerRowStyle}>
+              <PageHeader title="Images doublons" subtitle={`${folder.username} · ${folder.folder_name}`} noMargin />
+              <DangerButton onClick={() => setDeleteConfirmOpen(true)}>Supprimer le dossier</DangerButton>
+            </div>
+            <div style={{ ...panelStyle, padding: 16 }}>
+              <div style={{ color: "#6b4b12", fontWeight: 800, marginBottom: 14 }}>{folder.file_count} image(s) doublon(s)</div>
+              {loading ? (
+                <div style={{ color: "#8a6a2b", fontWeight: 700 }}>Chargement des images…</div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
+                  {images.map((image, index) => (
+                    <button key={image.file} type="button" onClick={() => openPreview(index)} style={{ border: "1px solid #e5c477", borderRadius: 10, background: "#fff9e8", padding: 8, cursor: "pointer", textAlign: "left" }}>
+                      <img src={image.url} alt={image.file} style={{ display: "block", width: "100%", height: 180, objectFit: "contain", background: "#fff", borderRadius: 7 }} />
+                      <div style={{ marginTop: 7, color: "#6b4b12", fontSize: 12, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{image.file}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </main>
+      {preview && (
+        <div role="presentation" style={dialogBackdropStyle} onMouseDown={closePreview}>
+          <div role="dialog" aria-modal="true" style={{ ...dialogStyle, width: "min(1040px, 92vw)", maxWidth: "92vw", maxHeight: "92vh", overflow: "hidden" }} onMouseDown={(event) => event.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+              <strong style={{ maxWidth: "30vw", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{preview.file}</strong>
+              <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <button type="button" onClick={() => setPreviewZoom((current) => Math.max(0.5, Number((current - 0.25).toFixed(2))))} style={previewControlButtonStyle}>−</button>
+                <button type="button" onClick={() => setPreviewZoom((current) => Math.min(3, Number((current + 0.25).toFixed(2))))} style={previewControlButtonStyle}>+</button>
+                <button type="button" onClick={() => { setPreviewZoom(1); setPreviewRotation(0); setPreviewPan({ x: 0, y: 0 }); }} style={previewControlButtonStyle}>{Math.round(previewZoom * 100)}%</button>
+                <button type="button" onClick={() => setPreviewRotation((current) => (current - 90 + 360) % 360)} title="Tourner à gauche" style={previewControlButtonStyle}>↶</button>
+                <button type="button" onClick={() => setPreviewRotation((current) => (current + 90) % 360)} title="Tourner à droite" style={previewControlButtonStyle}>↷</button>
+                <button type="button" onClick={() => movePreview(-1)} disabled={preview.index === 0} style={{ ...previewControlButtonStyle, opacity: preview.index === 0 ? 0.5 : 1 }}>Précédent</button>
+                <button type="button" onClick={() => movePreview(1)} disabled={preview.index >= images.length - 1} style={{ ...previewControlButtonStyle, opacity: preview.index >= images.length - 1 ? 0.5 : 1 }}>Suivant</button>
+                <button type="button" onClick={closePreview} style={dialogCancelStyle}>Fermer</button>
+              </div>
+            </div>
+            <div onPointerDown={handlePreviewPointerDown} onPointerMove={handlePreviewPointerMove} onPointerUp={handlePreviewPointerUp} onPointerLeave={handlePreviewPointerUp} style={{ width: "100%", height: "min(76vh, 720px)", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", background: "#f7f5ef", borderRadius: 10, cursor: isDraggingPreview ? "grabbing" : "grab", touchAction: "none", userSelect: "none" }}>
+              <img src={preview.url} alt={preview.file} style={{ display: "block", maxWidth: "88%", maxHeight: "88%", objectFit: "contain", transform: `translate(${previewPan.x}px, ${previewPan.y}px) rotate(${previewRotation}deg) scale(${previewZoom})`, transformOrigin: "center center", transition: isDraggingPreview ? "none" : "transform 0.15s ease", pointerEvents: "none" }} />
+            </div>
+          </div>
+        </div>
+      )}
+      {deleteConfirmOpen && folder && (
+        <ConfirmDialog
+          title="Supprimer le dossier de doublons ?"
+          message={`Le dossier “${folder.folder_name}” contient ${folder.file_count} image${folder.file_count > 1 ? "s" : ""}. Cette action supprimera définitivement toutes les copies.`}
+          confirmLabel="Supprimer définitivement"
+          onCancel={() => setDeleteConfirmOpen(false)}
+          onConfirm={deleteFolder}
+        />
+      )}
       {toast && <AdminToast toast={toast} onClose={() => setToast(null)} />}
     </div>
   );

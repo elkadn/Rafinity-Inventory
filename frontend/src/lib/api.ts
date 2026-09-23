@@ -73,6 +73,7 @@ export interface ScanDto {
   username: string;
   code: string;
   method: "barcode" | "ocr" | "manuel";
+  image_name: string | null;
   confidence: number | null;
   scanned_at: number;
   scan_date: string;
@@ -269,6 +270,8 @@ export interface UnreadPhotoFolderDto {
   files: string[];
 }
 
+export interface DuplicatePhotoFolderDto extends UnreadPhotoFolderDto {}
+
 export interface UserPhotoResultDto {
   user_id: string;
   username: string;
@@ -280,6 +283,7 @@ export interface UserPhotoResultDto {
   skipped: number;
   codes: string[];
   unread_folders: UnreadPhotoFolderDto[];
+  duplicate_folders: DuplicatePhotoFolderDto[];
 }
 
 export interface BulkPhotoJobDto {
@@ -298,7 +302,61 @@ export interface BulkPhotoJobDto {
   inventory_date: string;
   error: string | null;
   unread_images: { job_id: string; folder_key: string; folder_name: string; user_id: string; username: string; file_name: string; inventory_date: string; created_at: number }[];
+  duplicate_images: DuplicatePhotoFolderDto[];
   user_results: UserPhotoResultDto[];
+}
+
+export interface PhotoParentSubfolderDto {
+  name: string;
+  image_count: number;
+}
+
+export interface PhotoParentFolderDto {
+  path: string | null;
+  exists: boolean;
+  subfolders: PhotoParentSubfolderDto[];
+}
+
+export async function adminGetPhotoParent(token: string): Promise<PhotoParentFolderDto> {
+  const res = await fetch(`${API_BASE}/admin/photo-parent`, { headers: authHeaders(token) });
+  return handle(res);
+}
+
+export async function adminSetPhotoParent(token: string, path: string): Promise<PhotoParentFolderDto> {
+  const res = await fetch(`${API_BASE}/admin/photo-parent`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ path }),
+  });
+  return handle(res);
+}
+
+export async function adminImportPhotoParent(token: string): Promise<BulkPhotoJobDto> {
+  const res = await fetch(`${API_BASE}/admin/photo-parent/import`, {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+  return handle(res);
+}
+
+export async function adminGetPhotoParentImage(
+  token: string,
+  username: string,
+  imageName: string,
+): Promise<Blob> {
+  const url = `${API_BASE}/admin/photo-parent/${encodeURIComponent(username)}/files/${encodeURIComponent(imageName)}`;
+  const res = await fetch(url, { headers: authHeaders(token) });
+  if (!res.ok) {
+    let detail = `Impossible de charger l'image (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.detail) detail = body.detail;
+    } catch {
+      // Keep the status-based error.
+    }
+    throw new Error(detail);
+  }
+  return res.blob();
 }
 
 export interface UnreadPhotoFolderDto {
@@ -346,6 +404,27 @@ export async function adminListUnreadPhotoFolders(token: string): Promise<Unread
   return handle(res);
 }
 
+export async function adminListDuplicatePhotoFolders(token: string): Promise<DuplicatePhotoFolderDto[]> {
+  const res = await fetch(`${API_BASE}/admin/photo-jobs/duplicates`, { headers: authHeaders(token) });
+  return handle(res);
+}
+
+export async function adminDeleteDuplicatePhotoFolder(token: string, folderKey: string): Promise<{ deleted: boolean; folder_key: string }> {
+  const res = await fetch(`${API_BASE}/admin/photo-jobs/duplicates/${encodeURIComponent(folderKey)}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  return handle(res);
+}
+
+export async function adminGetDuplicatePhotoImage(token: string, folderKey: string, fileName: string): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/admin/photo-jobs/duplicates/${encodeURIComponent(folderKey)}/files/${encodeURIComponent(fileName)}`, {
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error(`Impossible de charger l'image (${res.status})`);
+  return res.blob();
+}
+
 export async function adminDeleteUnreadPhotoFolder(token: string, folderKey: string): Promise<{ deleted: boolean; folder_key: string }> {
   const res = await fetch(`${API_BASE}/admin/photo-jobs/unread/${encodeURIComponent(folderKey)}`, {
     method: "DELETE",
@@ -363,6 +442,19 @@ export async function adminAddManualCodeToUnreadFolder(
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders(token) },
     body: JSON.stringify(payload),
+  });
+  return handle(res);
+}
+
+export async function adminMarkUnreadPhotoAsDuplicate(
+  token: string,
+  folderKey: string,
+  fileName: string,
+): Promise<{ copied: boolean; folder_key: string; file_name: string; source_preserved: boolean }> {
+  const res = await fetch(`${API_BASE}/admin/photo-jobs/unread/${encodeURIComponent(folderKey)}/mark-duplicate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ file_name: fileName }),
   });
   return handle(res);
 }

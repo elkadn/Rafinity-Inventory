@@ -9,7 +9,7 @@ import re
 import shutil
 import time
 import uuid
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 import cv2
 import numpy as np
@@ -21,7 +21,13 @@ from app.auth import require_admin
 from app.db import get_db
 from app.routes.scans import _get_active_inventory, _today, register_code_for_user
 from app.routes.video import _decode_frame
-from app.schemas import UserPublic, new_id
+from app.schemas import (
+    PhotoParentFolderRequest,
+    PhotoParentFolderResponse,
+    PhotoParentSubfolder,
+    UserPublic,
+    new_id,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -35,6 +41,8 @@ MAX_PHOTO_SIZE_BYTES = 25 * 1024 * 1024
 PHOTO_WORKERS = max(4, min(8, os.cpu_count() or 4))
 JOB_CHECKPOINT_INTERVAL = 100
 UNREAD_PHOTO_ROOT = os.path.join(BULK_JOB_ROOT, "unread")
+DUPLICATE_PHOTO_ROOT = os.path.join(BULK_JOB_ROOT, "duplicates")
+PHOTO_PARENT_CONFIG_ID = "default_photo_parent_folder"
 
 
 class UserPhotoResult(BaseModel):
@@ -48,6 +56,7 @@ class UserPhotoResult(BaseModel):
     skipped: int
     codes: list[str] = Field(default_factory=list)
     unread_folders: list["UnreadPhotoFolder"] = Field(default_factory=list)
+    duplicate_folders: list["DuplicatePhotoFolder"] = Field(default_factory=list)
 
 
 class BulkPhotoJobResponse(BaseModel):
@@ -66,6 +75,7 @@ class BulkPhotoJobResponse(BaseModel):
     inventory_date: str
     error: str | None = None
     unread_images: list[dict] = Field(default_factory=list)
+    duplicate_images: list[dict] = Field(default_factory=list)
     user_results: list[UserPhotoResult] = Field(default_factory=list)
 
 
@@ -80,10 +90,45 @@ class UnreadPhotoFolder(BaseModel):
     files: list[str] = Field(default_factory=list)
 
 
+class DuplicatePhotoFolder(UnreadPhotoFolder):
+    pass
+
+
 class ManualPhotoCodeRequest(BaseModel):
     user_id: str
     code: str
     inventory_date: str | None = None
+
+
+def _runtime_photo_parent_path(configured_path: str) -> Path:
+    """Resolve a Windows host path to the Docker-mounted photo directory."""
+    if re.match(r"^[A-Za-z]:[\\/]", configured_path) and os.name != "nt":
+        return Path(os.environ.get("PHOTO_PARENT_MOUNT_PATH", "/mnt/photo-parent"))
+    return Path(configured_path).expanduser()
+
+
+def _photo_files_by_subfolder(root: Path) -> dict[str, list[Path]]:
+    if not root.is_dir():
+        return {}
+    result: dict[str, list[Path]] = {}
+    for child in sorted(root.iterdir(), key=lambda item: item.name.casefold()):
+        if not child.is_dir():
+            continue
+        files = sorted(
+            (
+                path
+                for path in child.rglob("*")
+                if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
+            ),
+            key=lambda item: str(item).casefold(),
+        )
+        result[child.name] = files
+    return result
+
+
+async def _get_default_photo_parent() -> str | None:
+    doc = await get_db().config.find_one({"_id": PHOTO_PARENT_CONFIG_ID})
+    return doc.get("photo_parent_path") if doc else None
 
 
 def _ensure_dir(path: str) -> None:
@@ -135,8 +180,9 @@ def _save_unread_photo_for_job(
     username: str,
     source_path: str,
     file_name: str,
+    review_root_name: str = "unread",
 ) -> dict:
-    unread_root = os.path.join(root_dir, "unread")
+    unread_root = os.path.join(root_dir, review_root_name)
     _ensure_dir(unread_root)
     safe_folder = _sanitize_folder_name(folder_name)
     folder_key = f"{safe_folder}_{job_id[:8]}"
@@ -208,8 +254,9 @@ def _list_unread_photo_folders(
     *,
     job_id: str | None = None,
     user_id: str | None = None,
+    review_root_name: str = "unread",
 ) -> list[dict]:
-    unread_root = os.path.join(root_dir, "unread")
+    unread_root = os.path.join(root_dir, review_root_name)
     if not os.path.isdir(unread_root):
         return []
 
@@ -257,14 +304,24 @@ def _public_job(job: dict) -> BulkPhotoJobResponse:
         if key in BulkPhotoJobResponse.model_fields
     }
     payload.setdefault("unread_images", job.get("unread_images", []))
+    payload.setdefault("duplicate_images", job.get("duplicate_images", []))
     job_id = job.get("id") or job.get("_id")
     if job_id:
         unread_for_job = _list_unread_photo_folders(job_id=job_id)
         payload["unread_images"] = unread_for_job
+        duplicate_for_job = _list_unread_photo_folders(
+            job_id=job_id, review_root_name="duplicates"
+        )
+        payload["duplicate_images"] = duplicate_for_job
         for user_result in payload.get("user_results", []):
             user_result["unread_folders"] = _list_unread_photo_folders(
                 job_id=job_id,
                 user_id=user_result.get("user_id"),
+            )
+            user_result["duplicate_folders"] = _list_unread_photo_folders(
+                job_id=job_id,
+                user_id=user_result.get("user_id"),
+                review_root_name="duplicates",
             )
     return BulkPhotoJobResponse(**payload)
 
@@ -436,6 +493,7 @@ async def _run_job(job: dict, job_dir: str) -> None:
 
                 added = 0
                 duplicates = 0
+                duplicate_entry = None
                 db_started = time.time()
                 try:
                     for code in codes:
@@ -444,12 +502,28 @@ async def _run_job(job: dict, job_dir: str) -> None:
                             username=item["username"],
                             code=code,
                             method="barcode",
+                            image_name=item.get("original_file_name"),
                             inventory_date=job["inventory_date"],
                         )
                         if result.added:
                             added += 1
                         else:
                             duplicates += 1
+                    if duplicates:
+                        duplicate_entry = _save_unread_photo_for_job(
+                            root_dir=BULK_JOB_ROOT,
+                            job_id=job["id"],
+                            folder_name=item.get("folder_name")
+                            or item.get("username")
+                            or "inconnu",
+                            inventory_date=job["inventory_date"],
+                            user_id=item["user_id"],
+                            username=item["username"],
+                            source_path=os.path.join(job_dir, item["stored_name"]),
+                            file_name=item.get("original_file_name")
+                            or item["stored_name"],
+                            review_root_name="duplicates",
+                        )
                 except Exception:
                     logger.exception(
                         "Unable to register codes from %s", item["stored_name"]
@@ -471,6 +545,12 @@ async def _run_job(job: dict, job_dir: str) -> None:
                         for code in codes:
                             if code not in user_result["codes"]:
                                 user_result["codes"].append(code)
+                        if duplicate_entry:
+                            user_result.setdefault("duplicate_folders", []).append(
+                                duplicate_entry
+                            )
+                    if duplicate_entry:
+                        job.setdefault("duplicate_images", []).append(duplicate_entry)
                     processed_files.add(item["stored_name"])
                     job["processed_files"] = list(processed_files)
                     job["processed_photos"] = len(processed_files)
@@ -619,6 +699,190 @@ async def resume_pending_jobs() -> None:
             asyncio.create_task(_run_job(job, job_dir))
 
 
+@router.get("/photo-parent", response_model=PhotoParentFolderResponse)
+async def get_photo_parent(
+    admin: UserPublic = Depends(require_admin),
+) -> PhotoParentFolderResponse:
+    del admin
+    configured_path = await _get_default_photo_parent()
+    if not configured_path:
+        return PhotoParentFolderResponse()
+
+    root = _runtime_photo_parent_path(configured_path)
+    folders = _photo_files_by_subfolder(root)
+    return PhotoParentFolderResponse(
+        path=configured_path,
+        exists=root.is_dir(),
+        subfolders=[
+            PhotoParentSubfolder(name=name, image_count=len(files))
+            for name, files in folders.items()
+        ],
+    )
+
+
+@router.put("/photo-parent", response_model=PhotoParentFolderResponse)
+async def set_photo_parent(
+    payload: PhotoParentFolderRequest,
+    admin: UserPublic = Depends(require_admin),
+) -> PhotoParentFolderResponse:
+    del admin
+    configured_path = payload.path.strip()
+    if not configured_path:
+        raise HTTPException(status_code=400, detail="Le chemin ne peut pas être vide.")
+
+    root = _runtime_photo_parent_path(configured_path)
+    if not root.is_dir():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Le dossier n'est pas accessible par le backend. "
+                "Avec Docker, vérifiez que le dossier est monté dans le conteneur."
+            ),
+        )
+
+    await get_db().config.replace_one(
+        {"_id": PHOTO_PARENT_CONFIG_ID},
+        {
+            "_id": PHOTO_PARENT_CONFIG_ID,
+            "photo_parent_path": configured_path,
+        },
+        upsert=True,
+    )
+    folders = _photo_files_by_subfolder(root)
+    return PhotoParentFolderResponse(
+        path=configured_path,
+        exists=True,
+        subfolders=[
+            PhotoParentSubfolder(name=name, image_count=len(files))
+            for name, files in folders.items()
+        ],
+    )
+
+
+@router.post(
+    "/photo-parent/import",
+    response_model=BulkPhotoJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def import_photo_parent(
+    admin: UserPublic = Depends(require_admin),
+) -> BulkPhotoJobResponse:
+    configured_path = await _get_default_photo_parent()
+    if not configured_path:
+        raise HTTPException(
+            status_code=400, detail="Aucun dossier parent par défaut n'est configuré."
+        )
+
+    root = _runtime_photo_parent_path(configured_path)
+    folders = _photo_files_by_subfolder(root)
+    if not folders:
+        raise HTTPException(
+            status_code=400, detail="Aucune image trouvée dans le dossier parent."
+        )
+
+    db = get_db()
+    users = await db.users.find({}).to_list(length=10000)
+    users_by_name = {str(user["username"]).casefold(): user for user in users}
+    inventory = await _get_active_inventory()
+    inventory_date = inventory.inventory_date if inventory else _today()
+    job_id = uuid.uuid4().hex
+    job_dir = os.path.join(BULK_JOB_ROOT, job_id)
+    _ensure_dir(job_dir)
+    job_files: list[dict] = []
+
+    try:
+        for folder_name, image_paths in folders.items():
+            user = users_by_name.get(folder_name.casefold())
+            if not user:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Aucun utilisateur trouvé pour le dossier '{folder_name}'.",
+                )
+            for image_path in image_paths:
+                data = image_path.read_bytes()
+                if len(data) > MAX_PHOTO_SIZE_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Photo trop volumineuse: {image_path.name}",
+                    )
+                stored_name = f"{len(job_files):06d}{image_path.suffix.lower()}"
+                with open(os.path.join(job_dir, stored_name), "wb") as handle:
+                    handle.write(data)
+                job_files.append(
+                    {
+                        "stored_name": stored_name,
+                        "original_file_name": image_path.name,
+                        "user_id": user["_id"],
+                        "username": user["username"],
+                        "folder_name": folder_name,
+                    }
+                )
+    except Exception:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise
+
+    if not job_files:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise HTTPException(
+            status_code=400, detail="Aucune image trouvée dans le dossier parent."
+        )
+
+    user_results: list[dict] = []
+    results_by_user: dict[str, dict] = {}
+    for item in job_files:
+        result = results_by_user.get(item["user_id"])
+        if result is None:
+            result = {
+                "user_id": item["user_id"],
+                "username": item["username"],
+                "total_photos": 0,
+                "processed_photos": 0,
+                "codes_found": 0,
+                "added": 0,
+                "duplicates": 0,
+                "skipped": 0,
+                "codes": [],
+            }
+            results_by_user[item["user_id"]] = result
+            user_results.append(result)
+        result["total_photos"] += 1
+
+    job = {
+        "id": job_id,
+        "admin_id": admin.id,
+        "status": "queued",
+        "progress": "En attente…",
+        "created_at": time.time(),
+        "started_at": None,
+        "finished_at": None,
+        "total_photos": len(job_files),
+        "processed_photos": 0,
+        "codes_found": 0,
+        "added": 0,
+        "duplicates": 0,
+        "skipped": 0,
+        "error": None,
+        "duplicate_images": [],
+        "inventory_date": inventory_date,
+        "user_results": user_results,
+        "files": job_files,
+    }
+    _write_job(job)
+    job["timing"] = {
+        "summary": {
+            "decode_seconds": 0.0,
+            "db_write_seconds": 0.0,
+            "batch_seconds": 0.0,
+            "total_seconds": 0.0,
+            "processed_images": 0,
+        },
+        "batches": [],
+        "events": [],
+    }
+    asyncio.create_task(_run_job(job, job_dir))
+    return _public_job(job)
+
+
 @router.post(
     "/photo-jobs",
     response_model=BulkPhotoJobResponse,
@@ -678,11 +942,15 @@ async def create_photo_job(
                 f"{index:06d}{os.path.splitext(upload.filename or '')[1].lower()}"
             )
             folder_name = _resolve_upload_folder_name(upload, user)
+            original_file_name = PurePosixPath(
+                (upload.filename or "").replace("\\", "/")
+            ).name
             with open(os.path.join(job_dir, stored_name), "wb") as handle:
                 handle.write(data)
             job_files.append(
                 {
                     "stored_name": stored_name,
+                    "original_file_name": original_file_name,
                     "user_id": user["_id"],
                     "username": user["username"],
                     "folder_name": folder_name,
@@ -736,6 +1004,7 @@ async def create_photo_job(
         "duplicates": 0,
         "skipped": 0,
         "error": None,
+        "duplicate_images": [],
         "inventory_date": inventory.inventory_date if inventory else _today(),
         "user_results": user_results,
         "files": job_files,
@@ -886,6 +1155,15 @@ async def list_unread_photo_folders(
     return [UnreadPhotoFolder(**folder) for folder in folders]
 
 
+@router.get("/photo-jobs/duplicates", response_model=list[DuplicatePhotoFolder])
+async def list_duplicate_photo_folders(
+    admin: UserPublic = Depends(require_admin),
+) -> list[DuplicatePhotoFolder]:
+    del admin
+    folders = _list_unread_photo_folders(review_root_name="duplicates")
+    return [DuplicatePhotoFolder(**folder) for folder in folders]
+
+
 @router.get("/photo-jobs/unread/{folder_key}/files/{filename}")
 async def get_unread_photo_file(
     folder_key: str,
@@ -900,6 +1178,78 @@ async def get_unread_photo_file(
     file_path = os.path.join(folder_path, safe_path.name)
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="Image non lue introuvable.")
+    return FileResponse(file_path)
+
+
+@router.get("/photo-jobs/duplicates/{folder_key}/files/{filename}")
+async def get_duplicate_photo_file(
+    folder_key: str,
+    filename: str,
+    admin: UserPublic = Depends(require_admin),
+):
+    del admin
+    safe_folder = PurePosixPath(folder_key)
+    safe_file = PurePosixPath(filename)
+    if (
+        ".." in safe_folder.parts
+        or safe_folder.is_absolute()
+        or ".." in safe_file.parts
+        or safe_file.is_absolute()
+    ):
+        raise HTTPException(status_code=400, detail="Chemin d'image invalide.")
+    folder_path = os.path.join(DUPLICATE_PHOTO_ROOT, safe_folder.name)
+    file_path = os.path.join(folder_path, safe_file.name)
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="Image doublon introuvable.")
+    return FileResponse(file_path)
+
+
+@router.delete("/photo-jobs/duplicates/{folder_key}")
+async def delete_duplicate_photo_folder(
+    folder_key: str,
+    admin: UserPublic = Depends(require_admin),
+) -> dict:
+    del admin
+    safe_folder = PurePosixPath(folder_key)
+    if ".." in safe_folder.parts or safe_folder.is_absolute():
+        raise HTTPException(status_code=400, detail="Nom de dossier invalide.")
+    folder_path = os.path.join(DUPLICATE_PHOTO_ROOT, safe_folder.name)
+    if not os.path.isdir(folder_path):
+        raise HTTPException(status_code=404, detail="Dossier de doublons introuvable.")
+    shutil.rmtree(folder_path, ignore_errors=True)
+    return {"deleted": True, "folder_key": folder_key}
+
+
+@router.get("/photo-parent/{username}/files/{filename}")
+async def get_photo_parent_file(
+    username: str,
+    filename: str,
+    admin: UserPublic = Depends(require_admin),
+):
+    del admin
+    configured_path = await _get_default_photo_parent()
+    if not configured_path:
+        raise HTTPException(
+            status_code=404, detail="Dossier parent photo non configuré."
+        )
+
+    root = _runtime_photo_parent_path(configured_path).resolve()
+    user_dir = (root / username).resolve()
+    file_path = (user_dir / filename).resolve()
+    try:
+        user_dir.relative_to(root)
+        file_path.relative_to(user_dir)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Chemin d'image invalide.")
+
+    if (
+        not user_dir.is_dir()
+        or not file_path.is_file()
+        or file_path.suffix.lower() not in IMAGE_EXTENSIONS
+    ):
+        raise HTTPException(
+            status_code=404, detail="Image introuvable dans le dossier utilisateur."
+        )
     return FileResponse(file_path)
 
 
@@ -947,6 +1297,80 @@ async def add_manual_code_to_unread_folder(
         inventory_date=payload.inventory_date or _today(),
     )
     return {"added": result.added, "reason": result.reason, "folder_key": folder_key}
+
+
+@router.post("/photo-jobs/unread/{folder_key}/mark-duplicate", response_model=dict)
+async def mark_unread_photo_as_duplicate(
+    folder_key: str,
+    payload: dict,
+    admin: UserPublic = Depends(require_admin),
+) -> dict:
+    del admin
+    safe_folder = PurePosixPath(folder_key)
+    file_name = str(payload.get("file_name") or "")
+    safe_file = PurePosixPath(file_name)
+    if (
+        ".." in safe_folder.parts
+        or safe_folder.is_absolute()
+        or ".." in safe_file.parts
+        or safe_file.is_absolute()
+        or not safe_file.name
+    ):
+        raise HTTPException(status_code=400, detail="Chemin d'image invalide.")
+
+    source_dir = Path(UNREAD_PHOTO_ROOT) / safe_folder.name
+    source_path = source_dir / safe_file.name
+    if not source_path.is_file():
+        raise HTTPException(status_code=404, detail="Image non lue introuvable.")
+
+    manifest_path = source_dir / "manifest.json"
+    try:
+        with manifest_path.open("r", encoding="utf-8") as handle:
+            manifest = json.load(handle)
+    except (FileNotFoundError, json.JSONDecodeError):
+        raise HTTPException(status_code=404, detail="Manifest du dossier introuvable.")
+
+    duplicate_dir = Path(DUPLICATE_PHOTO_ROOT) / safe_folder.name
+    _ensure_dir(str(duplicate_dir))
+    duplicate_path = duplicate_dir / safe_file.name
+    shutil.copy2(source_path, duplicate_path)
+
+    duplicate_manifest_path = duplicate_dir / "manifest.json"
+    try:
+        with duplicate_manifest_path.open("r", encoding="utf-8") as handle:
+            duplicate_manifest = json.load(handle)
+    except (FileNotFoundError, json.JSONDecodeError):
+        duplicate_manifest = {
+            "job_id": manifest.get("job_id", ""),
+            "folder_name": manifest.get("folder_name", safe_folder.name),
+            "inventory_date": manifest.get("inventory_date", ""),
+            "user_id": manifest.get("user_id", ""),
+            "username": manifest.get("username", ""),
+            "files": [],
+        }
+
+    file_entries = duplicate_manifest.setdefault("files", [])
+    if not any(
+        isinstance(entry, dict) and entry.get("file_name") == safe_file.name
+        for entry in file_entries
+    ):
+        file_entries.append(
+            {
+                "file_name": safe_file.name,
+                "created_at": time.time(),
+                "source_path": str(source_path),
+                "manual": True,
+            }
+        )
+    with duplicate_manifest_path.open("w", encoding="utf-8") as handle:
+        json.dump(duplicate_manifest, handle, indent=2, sort_keys=True)
+
+    return {
+        "copied": True,
+        "folder_key": folder_key,
+        "file_name": safe_file.name,
+        "source_preserved": source_path.is_file(),
+    }
 
 
 @router.get("/photo-jobs/{job_id}", response_model=BulkPhotoJobResponse)

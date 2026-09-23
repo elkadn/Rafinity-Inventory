@@ -20,6 +20,7 @@ create table app_scans (
   username varchar2(100) not null,
   code varchar2(100) not null,
   method varchar2(20) not null,
+  image_name varchar2(255),
   confidence number(10,6),
   scanned_at number(20,6) not null,
   scan_date varchar2(10) not null,
@@ -33,6 +34,7 @@ create table app_config (
   id varchar2(100) primary key,
   inventory_date varchar2(10),
   label varchar2(255),
+  photo_parent_path varchar2(1000),
   set_at number(20,6),
   set_by_username varchar2(100)
 );

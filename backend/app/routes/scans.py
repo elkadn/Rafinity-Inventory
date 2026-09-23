@@ -83,6 +83,7 @@ async def register_code_for_user(
     username: str,
     code: str,
     method: str,
+    image_name: str | None = None,
     confidence: float | None = None,
     inventory_date: str | None = None,
 ) -> ScanRegisterResponse:
@@ -101,6 +102,7 @@ async def register_code_for_user(
         username=username,
         code=code,
         method=method,
+        image_name=image_name,
         confidence=confidence,
         inventory_date=inventory_date,
     )

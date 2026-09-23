@@ -26,6 +26,10 @@ services:
     restart: unless-stopped
     env_file:
       - ${ENV_FILE:-.env}
+    environment:
+      PHOTO_PARENT_MOUNT_PATH: ${PHOTO_PARENT_MOUNT_PATH:-/mnt/photo-parent}
+    volumes:
+      - ${PHOTO_PARENT_HOST_PATH:-./photo_parent}:${PHOTO_PARENT_MOUNT_PATH:-/mnt/photo-parent}:ro
     depends_on:
       oracle:
         condition: service_healthy
